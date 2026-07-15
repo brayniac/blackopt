@@ -33,10 +33,7 @@ pub trait Sampler: Send + Sync {
     ///
     /// Returns a map from param name to distribution for parameters that
     /// should be sampled together (relative sampling).
-    fn infer_relative_search_space(
-        &self,
-        trials: &[FrozenTrial],
-    ) -> HashMap<String, Distribution> {
+    fn infer_relative_search_space(&self, trials: &[FrozenTrial]) -> HashMap<String, Distribution> {
         let _ = trials;
         HashMap::new()
     }

@@ -1,16 +1,16 @@
-use std::collections::HashMap;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use std::collections::HashMap;
 
 use crate::distributions::Distribution;
 use crate::error::Result;
 use crate::multi_objective::fast_non_dominated_sort;
+use crate::samplers::Sampler;
 use crate::samplers::nsgaii::crossover::{Crossover, UniformCrossover};
 use crate::samplers::random::RandomSampler;
-use crate::samplers::Sampler;
 use crate::search_space::{IntersectionSearchSpace, SearchSpaceTransform};
 use crate::study::StudyDirection;
 use crate::trial::{FrozenTrial, TrialState};
@@ -73,7 +73,14 @@ fn das_dennis_recursive(
 
     for i in 0..=remaining {
         point[depth] = i as f64 / dividing_parameter as f64;
-        das_dennis_recursive(points, point, n_objectives, dividing_parameter, remaining - i, depth + 1);
+        das_dennis_recursive(
+            points,
+            point,
+            n_objectives,
+            dividing_parameter,
+            remaining - i,
+            depth + 1,
+        );
     }
 }
 
@@ -130,10 +137,7 @@ impl NSGAIIISampler {
     }
 
     /// Normalize objective values to [0, 1] range.
-    fn normalize_values(
-        trials: &[&FrozenTrial],
-        directions: &[StudyDirection],
-    ) -> Vec<Vec<f64>> {
+    fn normalize_values(trials: &[&FrozenTrial], directions: &[StudyDirection]) -> Vec<Vec<f64>> {
         let n_obj = directions.len();
         if trials.is_empty() {
             return vec![];
@@ -228,10 +232,7 @@ fn perpendicular_distance(point: &[f64], direction: &[f64]) -> f64 {
 }
 
 impl Sampler for NSGAIIISampler {
-    fn infer_relative_search_space(
-        &self,
-        trials: &[FrozenTrial],
-    ) -> HashMap<String, Distribution> {
+    fn infer_relative_search_space(&self, trials: &[FrozenTrial]) -> HashMap<String, Distribution> {
         self.search_space.lock().calculate(trials)
     }
 
@@ -480,8 +481,8 @@ impl NSGAIIISamplerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::study::{StudyDirection, create_study};
     use std::sync::Arc;
-    use crate::study::{create_study, StudyDirection};
 
     #[test]
     fn test_das_dennis_2d() {

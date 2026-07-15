@@ -100,10 +100,7 @@ mod tests {
         let trial = dummy_trial();
         for _ in 0..100 {
             let v = sampler.sample_independent(&trial, "x", &dist).unwrap();
-            assert!(
-                (0.0..=1.0).contains(&v),
-                "value {v} out of [0, 1]"
-            );
+            assert!((0.0..=1.0).contains(&v), "value {v} out of [0, 1]");
         }
     }
 
@@ -116,10 +113,7 @@ mod tests {
         let trial = dummy_trial();
         for _ in 0..100 {
             let v = sampler.sample_independent(&trial, "lr", &dist).unwrap();
-            assert!(
-                (0.001..=1.0).contains(&v),
-                "value {v} out of [0.001, 1.0]"
-            );
+            assert!((0.001..=1.0).contains(&v), "value {v} out of [0.001, 1.0]");
         }
     }
 
@@ -138,8 +132,7 @@ mod tests {
     #[test]
     fn test_sample_int_bounds() {
         let sampler = RandomSampler::new(Some(42));
-        let dist =
-            Distribution::IntDistribution(IntDistribution::new(1, 10, false, 1).unwrap());
+        let dist = Distribution::IntDistribution(IntDistribution::new(1, 10, false, 1).unwrap());
         let trial = dummy_trial();
         for _ in 0..100 {
             let v = sampler.sample_independent(&trial, "n", &dist).unwrap() as i64;
@@ -162,8 +155,7 @@ mod tests {
     #[test]
     fn test_sample_int_log() {
         let sampler = RandomSampler::new(Some(42));
-        let dist =
-            Distribution::IntDistribution(IntDistribution::new(1, 100, true, 1).unwrap());
+        let dist = Distribution::IntDistribution(IntDistribution::new(1, 100, true, 1).unwrap());
         let trial = dummy_trial();
         for _ in 0..100 {
             let v = sampler.sample_independent(&trial, "n", &dist).unwrap() as i64;
@@ -194,14 +186,12 @@ mod tests {
         let sampler = RandomSampler::new(Some(42));
         let trial = dummy_trial();
 
-        let fd = Distribution::FloatDistribution(
-            FloatDistribution::new(5.0, 5.0, false, None).unwrap(),
-        );
+        let fd =
+            Distribution::FloatDistribution(FloatDistribution::new(5.0, 5.0, false, None).unwrap());
         let v = sampler.sample_independent(&trial, "x", &fd).unwrap();
         assert!((v - 5.0).abs() < 1e-10);
 
-        let id =
-            Distribution::IntDistribution(IntDistribution::new(3, 3, false, 1).unwrap());
+        let id = Distribution::IntDistribution(IntDistribution::new(3, 3, false, 1).unwrap());
         let v = sampler.sample_independent(&trial, "n", &id).unwrap();
         assert!((v - 3.0).abs() < 1e-10);
     }

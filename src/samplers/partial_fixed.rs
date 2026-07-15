@@ -67,10 +67,7 @@ impl PartialFixedSampler {
 }
 
 impl Sampler for PartialFixedSampler {
-    fn infer_relative_search_space(
-        &self,
-        trials: &[FrozenTrial],
-    ) -> HashMap<String, Distribution> {
+    fn infer_relative_search_space(&self, trials: &[FrozenTrial]) -> HashMap<String, Distribution> {
         let mut space = self.base_sampler.infer_relative_search_space(trials);
         // Remove fixed params from the relative search space
         for name in self.fixed_params.keys() {
@@ -124,7 +121,7 @@ impl Sampler for PartialFixedSampler {
 mod tests {
     use super::*;
     use crate::samplers::RandomSampler;
-    use crate::study::{create_study, StudyDirection};
+    use crate::study::{StudyDirection, create_study};
 
     #[test]
     fn test_partial_fixed_basic() {
@@ -132,8 +129,7 @@ mod tests {
         let mut fixed = HashMap::new();
         fixed.insert("x".to_string(), 0.5);
 
-        let sampler: Arc<dyn Sampler> =
-            Arc::new(PartialFixedSampler::new(fixed, base));
+        let sampler: Arc<dyn Sampler> = Arc::new(PartialFixedSampler::new(fixed, base));
 
         let study = create_study(
             None,
@@ -167,10 +163,7 @@ mod tests {
                 Some(ParamValue::Float(v)) => *v,
                 _ => panic!("expected float param x"),
             };
-            assert!(
-                (x - 0.5).abs() < 1e-10,
-                "x should be fixed at 0.5, got {x}"
-            );
+            assert!((x - 0.5).abs() < 1e-10, "x should be fixed at 0.5, got {x}");
         }
     }
 
@@ -180,8 +173,7 @@ mod tests {
         let mut fixed = HashMap::new();
         fixed.insert("x".to_string(), 0.5);
 
-        let sampler: Arc<dyn Sampler> =
-            Arc::new(PartialFixedSampler::new(fixed, base));
+        let sampler: Arc<dyn Sampler> = Arc::new(PartialFixedSampler::new(fixed, base));
 
         let study = create_study(
             None,

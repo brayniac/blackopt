@@ -322,11 +322,7 @@ impl ParzenEstimator {
     /// Sample `size` parameter vectors from the mixture.
     ///
     /// Returns: param_name → Vec<f64> of internal-repr values, each of length `size`.
-    pub fn sample(
-        &self,
-        rng: &mut impl Rng,
-        size: usize,
-    ) -> HashMap<String, Vec<f64>> {
+    pub fn sample(&self, rng: &mut impl Rng, size: usize) -> HashMap<String, Vec<f64>> {
         // Choose which mixture component each sample comes from.
         let active_indices = self.sample_component_indices(rng, size);
 
@@ -415,11 +411,7 @@ impl ParzenEstimator {
     /// `samples`: param_name → Vec<f64> of internal-repr values, all same length.
     /// Returns: Vec<f64> of log-pdf values, one per sample.
     pub fn log_pdf(&self, samples: &HashMap<String, Vec<f64>>) -> Vec<f64> {
-        let n_samples = samples
-            .values()
-            .next()
-            .map(|v| v.len())
-            .unwrap_or(0);
+        let n_samples = samples.values().next().map(|v| v.len()).unwrap_or(0);
         let n_kernels = self.weights.len();
 
         // weighted_log_pdf[sample][kernel] = log(w_k) + sum_d log p_k^d(x_d)
@@ -466,17 +458,11 @@ impl ParzenEstimator {
                         }
                     }
                 }
-                ParamKernels::Categorical {
-                    cat_weights,
-                    ..
-                } => {
+                ParamKernels::Categorical { cat_weights, .. } => {
                     for (si, &x) in xs.iter().enumerate() {
                         let idx = x as usize;
                         for k in 0..n_kernels {
-                            let w = cat_weights[k]
-                                .get(idx)
-                                .copied()
-                                .unwrap_or(EPS);
+                            let w = cat_weights[k].get(idx).copied().unwrap_or(EPS);
                             weighted_log_pdf[si][k] += w.max(EPS).ln();
                         }
                     }
@@ -538,10 +524,7 @@ fn logsumexp(values: &[f64]) -> f64 {
     if values.is_empty() {
         return f64::NEG_INFINITY;
     }
-    let max = values
-        .iter()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max);
+    let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     if max == f64::NEG_INFINITY {
         return f64::NEG_INFINITY;
     }
@@ -559,7 +542,9 @@ mod tests {
         let mut ss = IndexMap::new();
         ss.insert(
             "x".to_string(),
-            Distribution::FloatDistribution(FloatDistribution::new(0.0, 10.0, false, None).unwrap()),
+            Distribution::FloatDistribution(
+                FloatDistribution::new(0.0, 10.0, false, None).unwrap(),
+            ),
         );
         ss
     }
@@ -581,8 +566,8 @@ mod tests {
     fn test_default_gamma() {
         assert_eq!(default_gamma(0), 0);
         assert_eq!(default_gamma(1), 1);
-        assert_eq!(default_gamma(10), 2);  // ceil(1.5)
-        assert_eq!(default_gamma(20), 3);  // ceil(3.0)
+        assert_eq!(default_gamma(10), 2); // ceil(1.5)
+        assert_eq!(default_gamma(20), 3); // ceil(3.0)
         assert_eq!(default_gamma(100), 15); // ceil(15.0)
         assert_eq!(default_gamma(300), 45); // ceil(45.0)
     }

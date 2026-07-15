@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::distributions::Distribution;
 use crate::error::{Error, Result};
-use crate::samplers::random::RandomSampler;
 use crate::samplers::Sampler;
+use crate::samplers::random::RandomSampler;
 use crate::trial::{FrozenTrial, TrialState};
 
 /// A sampler that exhaustively evaluates all possible discrete parameter combinations.
@@ -63,7 +63,10 @@ impl BruteForceSampler {
     }
 
     /// Get all parameter combinations that have been visited by completed trials.
-    fn get_visited_combinations(trials: &[FrozenTrial], param_names: &[String]) -> HashSet<Vec<i64>> {
+    fn get_visited_combinations(
+        trials: &[FrozenTrial],
+        param_names: &[String],
+    ) -> HashSet<Vec<i64>> {
         let mut visited = HashSet::new();
         for trial in trials {
             if trial.state == TrialState::Complete || trial.state == TrialState::Running {
@@ -102,10 +105,7 @@ impl Sampler for BruteForceSampler {
             .sample_independent(trial, param_name, distribution)
     }
 
-    fn infer_relative_search_space(
-        &self,
-        trials: &[FrozenTrial],
-    ) -> HashMap<String, Distribution> {
+    fn infer_relative_search_space(&self, trials: &[FrozenTrial]) -> HashMap<String, Distribution> {
         // Use intersection search space from completed trials
         crate::search_space::intersection_search_space(trials, false)
     }
@@ -183,7 +183,7 @@ impl Sampler for BruteForceSampler {
 mod tests {
     use super::*;
     use crate::distributions::*;
-    use crate::study::{create_study, StudyDirection};
+    use crate::study::{StudyDirection, create_study};
     use std::sync::Arc;
 
     #[test]

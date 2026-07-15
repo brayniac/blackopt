@@ -100,8 +100,7 @@ impl Trial {
         name: &str,
         choices: Vec<CategoricalChoice>,
     ) -> Result<CategoricalChoice> {
-        let dist =
-            Distribution::CategoricalDistribution(CategoricalDistribution::new(choices)?);
+        let dist = Distribution::CategoricalDistribution(CategoricalDistribution::new(choices)?);
         let internal = self.suggest(name, &dist)?;
         dist.to_external_repr(internal).map(|v| match v {
             crate::distributions::ParamValue::Categorical(c) => c,
@@ -146,9 +145,10 @@ impl Trial {
 
     /// Check if the trial should be pruned.
     pub fn should_prune(&self) -> Result<bool> {
-        let all_trials = self
-            .storage
-            .get_all_trials(self.study_id, Some(&[TrialState::Complete, TrialState::Pruned]))?;
+        let all_trials = self.storage.get_all_trials(
+            self.study_id,
+            Some(&[TrialState::Complete, TrialState::Pruned]),
+        )?;
         let trial = self.storage.get_trial(self.trial_id)?;
         self.pruner.prune(&all_trials, &trial)
     }

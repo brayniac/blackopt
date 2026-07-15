@@ -3,8 +3,7 @@
 //! Simulates a training loop where unpromising trials are pruned early.
 
 use blackopt::{
-    create_study, MedianPruner, Error, Pruner, RandomSampler, Sampler, StudyDirection,
-    TrialState,
+    Error, MedianPruner, Pruner, RandomSampler, Sampler, StudyDirection, TrialState, create_study,
 };
 use std::sync::Arc;
 
@@ -58,10 +57,19 @@ fn main() {
         .unwrap();
 
     let trials = study.trials().unwrap();
-    let n_complete = trials.iter().filter(|t| t.state == TrialState::Complete).count();
-    let n_pruned = trials.iter().filter(|t| t.state == TrialState::Pruned).count();
+    let n_complete = trials
+        .iter()
+        .filter(|t| t.state == TrialState::Complete)
+        .count();
+    let n_pruned = trials
+        .iter()
+        .filter(|t| t.state == TrialState::Pruned)
+        .count();
 
-    println!("Completed: {n_complete}, Pruned: {n_pruned}, Total: {}", trials.len());
+    println!(
+        "Completed: {n_complete}, Pruned: {n_pruned}, Total: {}",
+        trials.len()
+    );
 
     let best = study.best_trial().unwrap();
     println!("Best trial: #{}", best.number);

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::callbacks::Callback;
@@ -119,8 +119,7 @@ impl Study {
 
     /// Set a user attribute.
     pub fn set_user_attr(&self, key: &str, value: serde_json::Value) -> Result<()> {
-        self.storage
-            .set_study_user_attr(self.study_id, key, value)
+        self.storage.set_study_user_attr(self.study_id, key, value)
     }
 
     /// Signal the optimize loop to stop after the current trial.
@@ -159,8 +158,7 @@ impl Study {
 
         // Sample relative params
         let mut relative_params = if !search_space.is_empty() {
-            self.sampler
-                .sample_relative(&all_trials, &search_space)?
+            self.sampler.sample_relative(&all_trials, &search_space)?
         } else {
             HashMap::new()
         };
@@ -372,11 +370,7 @@ impl Study {
     }
 
     /// Execute a single trial (single-objective).
-    fn run_trial<F>(
-        &self,
-        func: &F,
-        callbacks: Option<&[&dyn Callback]>,
-    ) -> Result<()>
+    fn run_trial<F>(&self, func: &F, callbacks: Option<&[&dyn Callback]>) -> Result<()>
     where
         F: Fn(&mut Trial) -> Result<f64>,
     {
@@ -405,11 +399,7 @@ impl Study {
             Err(_e) => (TrialState::Fail, None),
         };
 
-        let frozen = self.tell(
-            trial_id,
-            state,
-            values.as_deref(),
-        )?;
+        let frozen = self.tell(trial_id, state, values.as_deref())?;
 
         // Run callbacks
         if let Some(cbs) = callbacks {
@@ -425,11 +415,7 @@ impl Study {
     }
 
     /// Execute a single trial (multi-objective).
-    fn run_trial_multi<F>(
-        &self,
-        func: &F,
-        callbacks: Option<&[&dyn Callback]>,
-    ) -> Result<()>
+    fn run_trial_multi<F>(&self, func: &F, callbacks: Option<&[&dyn Callback]>) -> Result<()>
     where
         F: Fn(&mut Trial) -> Result<Vec<f64>>,
     {
@@ -438,9 +424,7 @@ impl Study {
 
         let (state, values) = match func(&mut trial) {
             Ok(vals) => {
-                if vals.iter().any(|v| v.is_nan())
-                    || vals.len() != self.directions.len()
-                {
+                if vals.iter().any(|v| v.is_nan()) || vals.len() != self.directions.len() {
                     (TrialState::Fail, None)
                 } else {
                     (TrialState::Complete, Some(vals))
@@ -458,11 +442,7 @@ impl Study {
             Err(_e) => (TrialState::Fail, None),
         };
 
-        let frozen = self.tell(
-            trial_id,
-            state,
-            values.as_deref(),
-        )?;
+        let frozen = self.tell(trial_id, state, values.as_deref())?;
 
         if let Some(cbs) = callbacks {
             let n_complete = self
@@ -482,11 +462,9 @@ impl Study {
             .storage
             .get_all_trials(self.study_id, Some(&[TrialState::Waiting]))?;
         if let Some(t) = waiting.first() {
-            let ok = self.storage.set_trial_state_values(
-                t.trial_id,
-                TrialState::Running,
-                None,
-            )?;
+            let ok = self
+                .storage
+                .set_trial_state_values(t.trial_id, TrialState::Running, None)?;
             if ok {
                 return Ok(Some(t.trial_id));
             }
@@ -498,8 +476,7 @@ impl Study {
 /// Add a trial to a study directly.
 impl Study {
     pub fn add_trial(&self, trial: &FrozenTrial) -> Result<()> {
-        self.storage
-            .create_new_trial(self.study_id, Some(trial))?;
+        self.storage.create_new_trial(self.study_id, Some(trial))?;
         Ok(())
     }
 
@@ -557,8 +534,7 @@ mod tests {
 
     #[test]
     fn test_create_study_named() {
-        let study =
-            create_study(None, None, None, Some("my-study"), None, None, false).unwrap();
+        let study = create_study(None, None, None, Some("my-study"), None, None, false).unwrap();
         assert_eq!(study.study_name(), "my-study");
     }
 
@@ -579,16 +555,18 @@ mod tests {
 
     #[test]
     fn test_create_study_both_directions_errors() {
-        assert!(create_study(
-            None,
-            None,
-            None,
-            None,
-            Some(StudyDirection::Minimize),
-            Some(vec![StudyDirection::Maximize]),
-            false,
-        )
-        .is_err());
+        assert!(
+            create_study(
+                None,
+                None,
+                None,
+                None,
+                Some(StudyDirection::Minimize),
+                Some(vec![StudyDirection::Maximize]),
+                false,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -605,16 +583,18 @@ mod tests {
         )
         .unwrap();
         // Without load_if_exists, duplicate errors
-        assert!(create_study(
-            Some(Arc::clone(&storage)),
-            None,
-            None,
-            Some("dup"),
-            None,
-            None,
-            false,
-        )
-        .is_err());
+        assert!(
+            create_study(
+                Some(Arc::clone(&storage)),
+                None,
+                None,
+                Some("dup"),
+                None,
+                None,
+                false,
+            )
+            .is_err()
+        );
         // With load_if_exists, succeeds
         let s2 = create_study(
             Some(Arc::clone(&storage)),
@@ -804,7 +784,10 @@ mod tests {
 
         // Should have been stopped early
         let n_trials = study.trials().unwrap().len();
-        assert!(n_trials < 10000, "study should have stopped early, got {n_trials} trials");
+        assert!(
+            n_trials < 10000,
+            "study should have stopped early, got {n_trials} trials"
+        );
     }
 
     #[test]
@@ -912,9 +895,13 @@ mod tests {
     #[test]
     fn test_optimize_with_median_pruner() {
         let sampler: Arc<dyn Sampler> = Arc::new(crate::samplers::RandomSampler::new(Some(42)));
-        let pruner: Arc<dyn crate::pruners::Pruner> = Arc::new(
-            crate::pruners::MedianPruner::new(3, 0, 1, 1, StudyDirection::Minimize),
-        );
+        let pruner: Arc<dyn crate::pruners::Pruner> = Arc::new(crate::pruners::MedianPruner::new(
+            3,
+            0,
+            1,
+            1,
+            StudyDirection::Minimize,
+        ));
         let study = create_study(
             None,
             Some(sampler),
@@ -947,8 +934,14 @@ mod tests {
 
         let trials = study.trials().unwrap();
         assert_eq!(trials.len(), 50);
-        let n_pruned = trials.iter().filter(|t| t.state == TrialState::Pruned).count();
-        let n_complete = trials.iter().filter(|t| t.state == TrialState::Complete).count();
+        let n_pruned = trials
+            .iter()
+            .filter(|t| t.state == TrialState::Pruned)
+            .count();
+        let n_complete = trials
+            .iter()
+            .filter(|t| t.state == TrialState::Complete)
+            .count();
         assert!(n_complete > 0, "expected some complete trials");
         // With median pruner active after 3 startup trials, some should be pruned
         assert!(

@@ -56,9 +56,7 @@ impl Distribution {
             (Self::FloatDistribution(d), ParamValue::Int(v)) => d.to_internal_repr(*v as f64),
             (Self::IntDistribution(d), ParamValue::Int(v)) => d.to_internal_repr(*v),
             (Self::IntDistribution(d), ParamValue::Float(v)) => d.to_internal_repr(*v as i64),
-            (Self::CategoricalDistribution(d), ParamValue::Categorical(v)) => {
-                d.to_internal_repr(v)
-            }
+            (Self::CategoricalDistribution(d), ParamValue::Categorical(v)) => d.to_internal_repr(v),
             _ => Err(Error::ValueError(
                 "parameter value type mismatch for distribution".to_string(),
             )),
@@ -99,9 +97,8 @@ mod tests {
 
     #[test]
     fn test_float_json_roundtrip() {
-        let dist = Distribution::FloatDistribution(
-            FloatDistribution::new(0.0, 1.0, false, None).unwrap(),
-        );
+        let dist =
+            Distribution::FloatDistribution(FloatDistribution::new(0.0, 1.0, false, None).unwrap());
         let json = distribution_to_json(&dist).unwrap();
         let parsed = json_to_distribution(&json).unwrap();
         assert_eq!(dist, parsed);
@@ -109,8 +106,7 @@ mod tests {
 
     #[test]
     fn test_int_json_roundtrip() {
-        let dist =
-            Distribution::IntDistribution(IntDistribution::new(1, 10, false, 1).unwrap());
+        let dist = Distribution::IntDistribution(IntDistribution::new(1, 10, false, 1).unwrap());
         let json = distribution_to_json(&dist).unwrap();
         let parsed = json_to_distribution(&json).unwrap();
         assert_eq!(dist, parsed);
@@ -132,9 +128,8 @@ mod tests {
 
     #[test]
     fn test_to_internal_external_roundtrip_float() {
-        let dist = Distribution::FloatDistribution(
-            FloatDistribution::new(0.0, 1.0, false, None).unwrap(),
-        );
+        let dist =
+            Distribution::FloatDistribution(FloatDistribution::new(0.0, 1.0, false, None).unwrap());
         let val = ParamValue::Float(0.5);
         let internal = dist.to_internal_repr(&val).unwrap();
         assert_eq!(internal, 0.5);
@@ -144,8 +139,7 @@ mod tests {
 
     #[test]
     fn test_to_internal_external_roundtrip_int() {
-        let dist =
-            Distribution::IntDistribution(IntDistribution::new(0, 10, false, 1).unwrap());
+        let dist = Distribution::IntDistribution(IntDistribution::new(0, 10, false, 1).unwrap());
         let val = ParamValue::Int(5);
         let internal = dist.to_internal_repr(&val).unwrap();
         assert_eq!(internal, 5.0);
@@ -166,14 +160,16 @@ mod tests {
         let internal = dist.to_internal_repr(&val).unwrap();
         assert_eq!(internal, 1.0);
         let external = dist.to_external_repr(internal).unwrap();
-        assert_eq!(external, ParamValue::Categorical(CategoricalChoice::Str("y".into())));
+        assert_eq!(
+            external,
+            ParamValue::Categorical(CategoricalChoice::Str("y".into()))
+        );
     }
 
     #[test]
     fn test_type_mismatch_error() {
-        let dist = Distribution::FloatDistribution(
-            FloatDistribution::new(0.0, 1.0, false, None).unwrap(),
-        );
+        let dist =
+            Distribution::FloatDistribution(FloatDistribution::new(0.0, 1.0, false, None).unwrap());
         let val = ParamValue::Categorical(CategoricalChoice::Str("oops".into()));
         assert!(dist.to_internal_repr(&val).is_err());
     }

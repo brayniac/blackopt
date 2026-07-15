@@ -1,15 +1,15 @@
-use std::collections::HashMap;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use std::collections::HashMap;
 
 use crate::distributions::Distribution;
 use crate::error::Result;
 use crate::multi_objective::{crowding_distance, fast_non_dominated_sort};
-use crate::samplers::random::RandomSampler;
 use crate::samplers::Sampler;
+use crate::samplers::random::RandomSampler;
 use crate::search_space::{IntersectionSearchSpace, SearchSpaceTransform};
 use crate::study::StudyDirection;
 use crate::trial::{FrozenTrial, TrialState};
@@ -101,10 +101,7 @@ impl NSGAIISampler {
 }
 
 impl Sampler for NSGAIISampler {
-    fn infer_relative_search_space(
-        &self,
-        trials: &[FrozenTrial],
-    ) -> HashMap<String, Distribution> {
+    fn infer_relative_search_space(&self, trials: &[FrozenTrial]) -> HashMap<String, Distribution> {
         self.search_space.lock().calculate(trials)
     }
 
@@ -324,8 +321,8 @@ impl NSGAIISamplerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::study::{StudyDirection, create_study};
     use std::sync::Arc;
-    use crate::study::{create_study, StudyDirection};
 
     #[test]
     fn test_nsgaii_sampler_creation() {

@@ -129,8 +129,7 @@ mod tests {
     #[test]
     fn test_max_trials_terminator() {
         let term = MaxTrialsTerminator::new(5);
-        let sampler: Arc<dyn crate::samplers::Sampler> =
-            Arc::new(RandomSampler::new(Some(42)));
+        let sampler: Arc<dyn crate::samplers::Sampler> = Arc::new(RandomSampler::new(Some(42)));
         let study = create_study(
             None,
             Some(sampler),
@@ -162,8 +161,7 @@ mod tests {
     #[test]
     fn test_no_improvement_terminator() {
         let term = NoImprovementTerminator::new(3);
-        let sampler: Arc<dyn crate::samplers::Sampler> =
-            Arc::new(RandomSampler::new(Some(42)));
+        let sampler: Arc<dyn crate::samplers::Sampler> = Arc::new(RandomSampler::new(Some(42)));
         let study = create_study(
             None,
             Some(sampler),
@@ -197,8 +195,7 @@ mod tests {
     #[test]
     fn test_target_value_terminator_minimize() {
         let term = TargetValueTerminator::new(0.5, StudyDirection::Minimize);
-        let sampler: Arc<dyn crate::samplers::Sampler> =
-            Arc::new(RandomSampler::new(Some(42)));
+        let sampler: Arc<dyn crate::samplers::Sampler> = Arc::new(RandomSampler::new(Some(42)));
         let study = create_study(
             None,
             Some(sampler),
@@ -234,8 +231,7 @@ mod tests {
     #[test]
     fn test_target_value_terminator_maximize() {
         let term = TargetValueTerminator::new(0.8, StudyDirection::Maximize);
-        let sampler: Arc<dyn crate::samplers::Sampler> =
-            Arc::new(RandomSampler::new(Some(42)));
+        let sampler: Arc<dyn crate::samplers::Sampler> = Arc::new(RandomSampler::new(Some(42)));
         let study = create_study(
             None,
             Some(sampler),
@@ -267,8 +263,7 @@ mod tests {
 
     #[test]
     fn test_terminators_in_optimize() {
-        let sampler: Arc<dyn crate::samplers::Sampler> =
-            Arc::new(RandomSampler::new(Some(42)));
+        let sampler: Arc<dyn crate::samplers::Sampler> = Arc::new(RandomSampler::new(Some(42)));
         let study = create_study(
             None,
             Some(sampler),
@@ -280,8 +275,7 @@ mod tests {
         )
         .unwrap();
 
-        let terminators: Vec<Arc<dyn Terminator>> =
-            vec![Arc::new(MaxTrialsTerminator::new(10))];
+        let terminators: Vec<Arc<dyn Terminator>> = vec![Arc::new(MaxTrialsTerminator::new(10))];
 
         study
             .optimize_with_terminators(

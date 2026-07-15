@@ -15,8 +15,8 @@ use rand_chacha::ChaCha8Rng;
 use crate::distributions::Distribution;
 use crate::error::Result;
 use crate::multi_objective::{get_pareto_front_trials, hypervolume_2d};
-use crate::samplers::random::RandomSampler;
 use crate::samplers::Sampler;
+use crate::samplers::random::RandomSampler;
 use crate::search_space::{IntersectionSearchSpace, SearchSpaceTransform};
 use crate::study::StudyDirection;
 use crate::trial::{FrozenTrial, TrialState};
@@ -76,10 +76,7 @@ impl std::fmt::Debug for MorboSampler {
 }
 
 impl Sampler for MorboSampler {
-    fn infer_relative_search_space(
-        &self,
-        trials: &[FrozenTrial],
-    ) -> HashMap<String, Distribution> {
+    fn infer_relative_search_space(&self, trials: &[FrozenTrial]) -> HashMap<String, Distribution> {
         let n_complete = trials
             .iter()
             .filter(|t| t.state == TrialState::Complete)
@@ -626,9 +623,8 @@ fn sample_with_gp(
             }
             None => {
                 // GP fit failed — use random values.
-                thompson_values[obj_idx] = (0..n_candidates)
-                    .map(|_| rng.gen_range(0.0..1.0))
-                    .collect();
+                thompson_values[obj_idx] =
+                    (0..n_candidates).map(|_| rng.gen_range(0.0..1.0)).collect();
             }
         }
     }
@@ -805,18 +801,16 @@ impl MorboSamplerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::study::{create_study, StudyDirection};
+    use crate::study::{StudyDirection, create_study};
 
     #[test]
     fn test_morbo_creation() {
-        let sampler = MorboSamplerBuilder::new(vec![
-            StudyDirection::Minimize,
-            StudyDirection::Minimize,
-        ])
-        .n_startup_trials(10)
-        .n_trust_regions(2)
-        .seed(42)
-        .build();
+        let sampler =
+            MorboSamplerBuilder::new(vec![StudyDirection::Minimize, StudyDirection::Minimize])
+                .n_startup_trials(10)
+                .n_trust_regions(2)
+                .seed(42)
+                .build();
 
         assert_eq!(sampler.n_startup_trials, 10);
         assert_eq!(sampler.n_trust_regions, 2);
@@ -825,13 +819,10 @@ mod tests {
     #[test]
     fn test_morbo_startup_random() {
         let sampler: Arc<dyn Sampler> = Arc::new(
-            MorboSamplerBuilder::new(vec![
-                StudyDirection::Minimize,
-                StudyDirection::Minimize,
-            ])
-            .n_startup_trials(10)
-            .seed(42)
-            .build(),
+            MorboSamplerBuilder::new(vec![StudyDirection::Minimize, StudyDirection::Minimize])
+                .n_startup_trials(10)
+                .seed(42)
+                .build(),
         );
 
         let study = create_study(
@@ -866,15 +857,12 @@ mod tests {
         // ZDT1 benchmark: 2 objectives, n_dims parameters in [0,1].
         let n_dims = 4;
         let sampler: Arc<dyn Sampler> = Arc::new(
-            MorboSamplerBuilder::new(vec![
-                StudyDirection::Minimize,
-                StudyDirection::Minimize,
-            ])
-            .n_startup_trials(20)
-            .n_trust_regions(2)
-            .n_candidates(64)
-            .seed(42)
-            .build(),
+            MorboSamplerBuilder::new(vec![StudyDirection::Minimize, StudyDirection::Minimize])
+                .n_startup_trials(20)
+                .n_trust_regions(2)
+                .n_candidates(64)
+                .seed(42)
+                .build(),
         );
 
         let study = create_study(
@@ -894,18 +882,11 @@ mod tests {
                 move |trial| {
                     let mut x = Vec::with_capacity(n_dims);
                     for i in 0..n_dims {
-                        x.push(trial.suggest_float(
-                            &format!("x{i}"),
-                            0.0,
-                            1.0,
-                            false,
-                            None,
-                        )?);
+                        x.push(trial.suggest_float(&format!("x{i}"), 0.0, 1.0, false, None)?);
                     }
                     // ZDT1
                     let f1 = x[0];
-                    let g = 1.0
-                        + 9.0 * x[1..].iter().sum::<f64>() / (n_dims as f64 - 1.0);
+                    let g = 1.0 + 9.0 * x[1..].iter().sum::<f64>() / (n_dims as f64 - 1.0);
                     let f2 = g * (1.0 - (f1 / g).sqrt());
                     Ok(vec![f1, f2])
                 },

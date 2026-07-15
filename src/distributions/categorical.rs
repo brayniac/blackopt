@@ -71,17 +71,16 @@ impl CategoricalDistribution {
             .iter()
             .position(|c| c == value)
             .map(|i| i as f64)
-            .ok_or_else(|| {
-                Error::ValueError(format!("value {value} not found in choices"))
-            })
+            .ok_or_else(|| Error::ValueError(format!("value {value} not found in choices")))
     }
 
     /// Convert an internal representation (index as f64) back to an external value.
     pub fn to_external_repr(&self, value: f64) -> Result<CategoricalChoice> {
         let index = value as usize;
-        self.choices.get(index).cloned().ok_or_else(|| {
-            Error::ValueError(format!("index {index} out of range for choices"))
-        })
+        self.choices
+            .get(index)
+            .cloned()
+            .ok_or_else(|| Error::ValueError(format!("index {index} out of range for choices")))
     }
 
     /// True if this distribution contains exactly one choice.
@@ -134,9 +133,7 @@ mod tests {
         ])
         .unwrap();
 
-        let internal = d
-            .to_internal_repr(&CategoricalChoice::Int(42))
-            .unwrap();
+        let internal = d.to_internal_repr(&CategoricalChoice::Int(42)).unwrap();
         assert_eq!(internal, 1.0);
 
         let external = d.to_external_repr(1.0).unwrap();

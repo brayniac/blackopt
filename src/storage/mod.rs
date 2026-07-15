@@ -29,12 +29,8 @@ pub trait Storage: Send + Sync {
     fn delete_study(&self, study_id: i64) -> Result<()>;
 
     /// Set a user attribute on a study.
-    fn set_study_user_attr(
-        &self,
-        study_id: i64,
-        key: &str,
-        value: serde_json::Value,
-    ) -> Result<()>;
+    fn set_study_user_attr(&self, study_id: i64, key: &str, value: serde_json::Value)
+    -> Result<()>;
 
     /// Set a system attribute on a study.
     fn set_study_system_attr(
@@ -67,11 +63,7 @@ pub trait Storage: Send + Sync {
     /// Create a new trial. Returns the trial_id.
     ///
     /// If `template_trial` is `None`, a fresh RUNNING trial is created.
-    fn create_new_trial(
-        &self,
-        study_id: i64,
-        template_trial: Option<&FrozenTrial>,
-    ) -> Result<i64>;
+    fn create_new_trial(&self, study_id: i64, template_trial: Option<&FrozenTrial>) -> Result<i64>;
 
     /// Set a parameter on a trial (internal representation).
     fn set_trial_param(
@@ -102,12 +94,8 @@ pub trait Storage: Send + Sync {
     ) -> Result<()>;
 
     /// Set a user attribute on a trial.
-    fn set_trial_user_attr(
-        &self,
-        trial_id: i64,
-        key: &str,
-        value: serde_json::Value,
-    ) -> Result<()>;
+    fn set_trial_user_attr(&self, trial_id: i64, key: &str, value: serde_json::Value)
+    -> Result<()>;
 
     /// Set a system attribute on a trial.
     fn set_trial_system_attr(
@@ -174,12 +162,9 @@ pub trait Storage: Send + Sync {
 
     /// Get the best trial for a single-objective study.
     fn get_best_trial(&self, study_id: i64) -> Result<FrozenTrial> {
-        let trials =
-            self.get_all_trials(study_id, Some(&[TrialState::Complete]))?;
+        let trials = self.get_all_trials(study_id, Some(&[TrialState::Complete]))?;
         if trials.is_empty() {
-            return Err(Error::ValueError(
-                "no trials are completed yet".into(),
-            ));
+            return Err(Error::ValueError("no trials are completed yet".into()));
         }
         let directions = self.get_study_directions(study_id)?;
         if directions.len() > 1 {

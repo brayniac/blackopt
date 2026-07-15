@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use parking_lot::Mutex;
-use rand::seq::SliceRandom;
 use rand::SeedableRng;
+use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 
 use crate::distributions::Distribution;
@@ -143,10 +143,7 @@ impl GridSampler {
 
     /// Get all grid_ids already assigned to trials.
     fn get_visited_grid_ids(&self, trials: &[FrozenTrial]) -> Vec<usize> {
-        trials
-            .iter()
-            .filter_map(Self::get_grid_id)
-            .collect()
+        trials.iter().filter_map(Self::get_grid_id).collect()
     }
 
     /// Get unvisited grid indices.
@@ -281,11 +278,7 @@ mod tests {
                 None
             },
             datetime_start: Some(now),
-            datetime_complete: if state.is_finished() {
-                Some(now)
-            } else {
-                None
-            },
+            datetime_complete: if state.is_finished() { Some(now) } else { None },
             params: HashMap::new(),
             distributions: HashMap::new(),
             user_attrs: HashMap::new(),
@@ -395,7 +388,11 @@ mod tests {
         let trial = make_trial_with_grid_id(0, 0, TrialState::Running);
         let dist =
             Distribution::FloatDistribution(FloatDistribution::new(0.0, 1.0, false, None).unwrap());
-        assert!(sampler.sample_independent(&trial, "unknown", &dist).is_err());
+        assert!(
+            sampler
+                .sample_independent(&trial, "unknown", &dist)
+                .is_err()
+        );
     }
 
     #[test]

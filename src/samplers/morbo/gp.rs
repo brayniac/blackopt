@@ -65,8 +65,7 @@ impl GaussianProcess {
     /// Predict mean and variance at a set of test points.
     pub fn predict(&self, x_test: &[Vec<f64>]) -> (Vec<f64>, Vec<f64>) {
         let n_test = x_test.len();
-        let k_star =
-            kernel_matrix(x_test, &self.x_train, &self.lengthscales, self.output_scale);
+        let k_star = kernel_matrix(x_test, &self.x_train, &self.lengthscales, self.output_scale);
 
         let mut means = Vec::with_capacity(n_test);
         let mut variances = Vec::with_capacity(n_test);
@@ -102,7 +101,6 @@ impl GaussianProcess {
             })
             .collect()
     }
-
 }
 
 /// Standardize targets to zero mean, unit variance.
@@ -253,9 +251,7 @@ fn optimize_hyperparams(
     n_dims: usize,
 ) -> (Vec<f64>, f64, f64) {
     // Log-spaced grids.
-    let lengthscale_grid: Vec<f64> = (-3..=2)
-        .map(|i| 10.0_f64.powf(i as f64 * 0.5))
-        .collect();
+    let lengthscale_grid: Vec<f64> = (-3..=2).map(|i| 10.0_f64.powf(i as f64 * 0.5)).collect();
     let output_scale_grid: Vec<f64> = vec![0.1, 0.5, 1.0, 2.0, 5.0];
     let noise_grid: Vec<f64> = vec![1e-4, 1e-3, 1e-2, 0.1];
 
@@ -319,9 +315,7 @@ mod tests {
     fn test_gp_fit_predict_sin() {
         // Fit GP to sin(x) on [0, 1].
         let n = 20;
-        let x_train: Vec<Vec<f64>> = (0..n)
-            .map(|i| vec![i as f64 / (n - 1) as f64])
-            .collect();
+        let x_train: Vec<Vec<f64>> = (0..n).map(|i| vec![i as f64 / (n - 1) as f64]).collect();
         let y_train: Vec<f64> = x_train
             .iter()
             .map(|x| (x[0] * std::f64::consts::TAU).sin())

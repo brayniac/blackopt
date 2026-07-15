@@ -74,11 +74,7 @@ mod tests {
                 None
             },
             datetime_start: Some(now),
-            datetime_complete: if state.is_finished() {
-                Some(now)
-            } else {
-                None
-            },
+            datetime_complete: if state.is_finished() { Some(now) } else { None },
             params: HashMap::new(),
             distributions: HashMap::new(),
             user_attrs: HashMap::new(),

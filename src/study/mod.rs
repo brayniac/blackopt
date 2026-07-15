@@ -1,6 +1,6 @@
+mod core;
 mod direction;
 mod frozen;
-mod core;
 
 pub use core::Study;
 pub use direction::StudyDirection;
@@ -55,11 +55,8 @@ pub fn create_study(
     let study_id = match storage.create_new_study(&dirs, study_name) {
         Ok(id) => id,
         Err(Error::DuplicatedStudyError(_)) if load_if_exists => {
-            let name = study_name.ok_or_else(|| {
-                Error::ValueError(
-                    "load_if_exists requires a study_name".into(),
-                )
-            })?;
+            let name = study_name
+                .ok_or_else(|| Error::ValueError("load_if_exists requires a study_name".into()))?;
             storage.get_study_id_from_name(name)?
         }
         Err(e) => return Err(e),
@@ -68,8 +65,7 @@ pub fn create_study(
     let name = storage.get_study_name_from_id(study_id)?;
     let stored_dirs = storage.get_study_directions(study_id)?;
 
-    let sampler =
-        sampler.unwrap_or_else(|| Arc::new(RandomSampler::new(None)));
+    let sampler = sampler.unwrap_or_else(|| Arc::new(RandomSampler::new(None)));
     let pruner = pruner.unwrap_or_else(|| Arc::new(NopPruner::new()));
 
     Ok(Study::new(

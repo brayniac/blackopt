@@ -90,7 +90,8 @@ impl ImportanceEvaluator for FanovaEvaluator {
 
         if total > 0.0 {
             // Sort by importance descending
-            raw_importances.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            raw_importances
+                .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             for (name, imp) in raw_importances {
                 result.insert(name, imp / total);
             }
@@ -193,9 +194,7 @@ pub fn get_param_importances(
         .collect();
 
     if trials.is_empty() {
-        return Err(Error::ValueError(
-            "study has no completed trials".into(),
-        ));
+        return Err(Error::ValueError("study has no completed trials".into()));
     }
 
     // Collect all parameter names from completed trials
@@ -229,7 +228,7 @@ pub fn get_param_importances(
 mod tests {
     use super::*;
     use crate::samplers::RandomSampler;
-    use crate::study::{create_study, StudyDirection};
+    use crate::study::{StudyDirection, create_study};
     use std::sync::Arc;
 
     #[test]
@@ -253,8 +252,7 @@ mod tests {
 
     #[test]
     fn test_get_param_importances_quadratic() {
-        let sampler: Arc<dyn crate::samplers::Sampler> =
-            Arc::new(RandomSampler::new(Some(42)));
+        let sampler: Arc<dyn crate::samplers::Sampler> = Arc::new(RandomSampler::new(Some(42)));
         let study = create_study(
             None,
             Some(sampler),
@@ -301,8 +299,7 @@ mod tests {
 
     #[test]
     fn test_get_param_importances_with_subset() {
-        let sampler: Arc<dyn crate::samplers::Sampler> =
-            Arc::new(RandomSampler::new(Some(42)));
+        let sampler: Arc<dyn crate::samplers::Sampler> = Arc::new(RandomSampler::new(Some(42)));
         let study = create_study(
             None,
             Some(sampler),
@@ -328,8 +325,7 @@ mod tests {
             .unwrap();
 
         // Only evaluate importance for "x"
-        let importances =
-            get_param_importances(&study, None, Some(&["x"])).unwrap();
+        let importances = get_param_importances(&study, None, Some(&["x"])).unwrap();
         assert_eq!(importances.len(), 1);
         assert!(importances.contains_key("x"));
         assert!((importances["x"] - 1.0).abs() < 1e-10);
@@ -367,8 +363,7 @@ mod tests {
 
     #[test]
     fn test_importance_three_params() {
-        let sampler: Arc<dyn crate::samplers::Sampler> =
-            Arc::new(RandomSampler::new(Some(123)));
+        let sampler: Arc<dyn crate::samplers::Sampler> = Arc::new(RandomSampler::new(Some(123)));
         let study = create_study(
             None,
             Some(sampler),

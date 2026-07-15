@@ -1,3 +1,3 @@
 mod sampler;
 
-pub use sampler::{generate_reference_points, NSGAIIISampler, NSGAIIISamplerBuilder};
+pub use sampler::{NSGAIIISampler, NSGAIIISamplerBuilder, generate_reference_points};

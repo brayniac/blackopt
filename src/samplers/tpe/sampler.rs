@@ -15,13 +15,13 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::distributions::Distribution;
 use crate::error::Result;
-use crate::samplers::random::RandomSampler;
 use crate::samplers::Sampler;
+use crate::samplers::random::RandomSampler;
 use crate::search_space::IntersectionSearchSpace;
 use crate::study::StudyDirection;
 use crate::trial::{FrozenTrial, TrialState};
 
-use super::parzen_estimator::{default_gamma, ParzenEstimator, ParzenEstimatorParameters};
+use super::parzen_estimator::{ParzenEstimator, ParzenEstimatorParameters, default_gamma};
 
 /// A TPE (Tree-structured Parzen Estimator) sampler.
 ///
@@ -230,10 +230,8 @@ impl TpeSampler {
         let obs_below = Self::get_observations(&below, search_space);
         let obs_above = Self::get_observations(&above, search_space);
 
-        let pe_below =
-            ParzenEstimator::new(&obs_below, search_space, &self.pe_params, None);
-        let pe_above =
-            ParzenEstimator::new(&obs_above, search_space, &self.pe_params, None);
+        let pe_below = ParzenEstimator::new(&obs_below, search_space, &self.pe_params, None);
+        let pe_above = ParzenEstimator::new(&obs_above, search_space, &self.pe_params, None);
 
         // Sample candidates from l(x).
         let mut rng = self.rng.lock();
@@ -273,10 +271,7 @@ impl TpeSampler {
 }
 
 impl Sampler for TpeSampler {
-    fn infer_relative_search_space(
-        &self,
-        trials: &[FrozenTrial],
-    ) -> HashMap<String, Distribution> {
+    fn infer_relative_search_space(&self, trials: &[FrozenTrial]) -> HashMap<String, Distribution> {
         if !self.multivariate {
             return HashMap::new();
         }
@@ -424,7 +419,11 @@ mod tests {
     use super::*;
     use crate::distributions::*;
 
-    fn make_complete_trial(number: i64, value: f64, params: HashMap<String, ParamValue>) -> FrozenTrial {
+    fn make_complete_trial(
+        number: i64,
+        value: f64,
+        params: HashMap<String, ParamValue>,
+    ) -> FrozenTrial {
         let now = chrono::Utc::now();
         let mut distributions = HashMap::new();
         for (name, val) in &params {
@@ -521,16 +520,15 @@ mod tests {
         let mut search_space = HashMap::new();
         search_space.insert(
             "x".to_string(),
-            Distribution::FloatDistribution(FloatDistribution::new(-10.0, 10.0, false, None).unwrap()),
+            Distribution::FloatDistribution(
+                FloatDistribution::new(-10.0, 10.0, false, None).unwrap(),
+            ),
         );
 
         let result = sampler.sample_relative(&trials, &search_space).unwrap();
         assert!(result.contains_key("x"));
         let x = result["x"];
-        assert!(
-            (-10.0..=10.0).contains(&x),
-            "TPE sample {x} out of bounds"
-        );
+        assert!((-10.0..=10.0).contains(&x), "TPE sample {x} out of bounds");
     }
 
     #[test]
@@ -539,8 +537,9 @@ mod tests {
         // TPE should concentrate samples near x=0 more than random.
         let sampler = TpeSampler::with_defaults(StudyDirection::Minimize, Some(42));
         let random = RandomSampler::new(Some(42));
-        let dist =
-            Distribution::FloatDistribution(FloatDistribution::new(-5.0, 5.0, false, None).unwrap());
+        let dist = Distribution::FloatDistribution(
+            FloatDistribution::new(-5.0, 5.0, false, None).unwrap(),
+        );
 
         // Generate 30 trials for both samplers.
         let mut tpe_trials = Vec::new();
@@ -623,9 +622,7 @@ mod tests {
     #[test]
     fn test_tpe_empty_search_space() {
         let sampler = TpeSampler::with_defaults(StudyDirection::Minimize, Some(42));
-        let result = sampler
-            .sample_relative(&[], &HashMap::new())
-            .unwrap();
+        let result = sampler.sample_relative(&[], &HashMap::new()).unwrap();
         assert!(result.is_empty());
     }
 }

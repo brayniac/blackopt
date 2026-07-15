@@ -112,7 +112,6 @@ impl TrustRegion {
             }
         }
     }
-
 }
 
 #[cfg(test)]
@@ -213,5 +212,4 @@ mod tests {
         // 2L = 0.2, so within [0.3, 0.7]
         assert_eq!(local, vec![0, 1, 2]);
     }
-
 }

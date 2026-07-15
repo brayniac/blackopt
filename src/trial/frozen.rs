@@ -233,73 +233,91 @@ mod tests {
     fn test_value_and_values_both_provided() {
         let now = Utc::now();
         let (params, dists, ua, sa, iv) = empty_maps();
-        assert!(FrozenTrial::new(
-            0,
-            TrialState::Complete,
-            Some(1.0),
-            Some(vec![2.0]),
-            Some(now),
-            Some(now),
-            params,
-            dists,
-            ua,
-            sa,
-            iv,
-            0,
-        )
-        .is_err());
+        assert!(
+            FrozenTrial::new(
+                0,
+                TrialState::Complete,
+                Some(1.0),
+                Some(vec![2.0]),
+                Some(now),
+                Some(now),
+                params,
+                dists,
+                ua,
+                sa,
+                iv,
+                0,
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_complete_without_values_rejected() {
         let now = Utc::now();
         let (params, dists, ua, sa, iv) = empty_maps();
-        assert!(FrozenTrial::new(
-            0, TrialState::Complete, None, None, Some(now), Some(now), params, dists, ua, sa,
-            iv, 0,
-        )
-        .is_err());
+        assert!(
+            FrozenTrial::new(
+                0,
+                TrialState::Complete,
+                None,
+                None,
+                Some(now),
+                Some(now),
+                params,
+                dists,
+                ua,
+                sa,
+                iv,
+                0,
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_fail_with_values_rejected() {
         let now = Utc::now();
         let (params, dists, ua, sa, iv) = empty_maps();
-        assert!(FrozenTrial::new(
-            0,
-            TrialState::Fail,
-            Some(1.0),
-            None,
-            Some(now),
-            Some(now),
-            params,
-            dists,
-            ua,
-            sa,
-            iv,
-            0,
-        )
-        .is_err());
+        assert!(
+            FrozenTrial::new(
+                0,
+                TrialState::Fail,
+                Some(1.0),
+                None,
+                Some(now),
+                Some(now),
+                params,
+                dists,
+                ua,
+                sa,
+                iv,
+                0,
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_running_without_start_rejected() {
         let (params, dists, ua, sa, iv) = empty_maps();
-        assert!(FrozenTrial::new(
-            0,
-            TrialState::Running,
-            None,
-            None,
-            None,
-            None,
-            params,
-            dists,
-            ua,
-            sa,
-            iv,
-            0,
-        )
-        .is_err());
+        assert!(
+            FrozenTrial::new(
+                0,
+                TrialState::Running,
+                None,
+                None,
+                None,
+                None,
+                params,
+                dists,
+                ua,
+                sa,
+                iv,
+                0,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -330,21 +348,23 @@ mod tests {
         params.insert("x".into(), ParamValue::Float(0.5));
         let (_, dists, ua, sa, iv) = empty_maps();
         // params has "x" but dists is empty
-        assert!(FrozenTrial::new(
-            0,
-            TrialState::Complete,
-            Some(1.0),
-            None,
-            Some(now),
-            Some(now),
-            params,
-            dists,
-            ua,
-            sa,
-            iv,
-            0,
-        )
-        .is_err());
+        assert!(
+            FrozenTrial::new(
+                0,
+                TrialState::Complete,
+                Some(1.0),
+                None,
+                Some(now),
+                Some(now),
+                params,
+                dists,
+                ua,
+                sa,
+                iv,
+                0,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -358,21 +378,23 @@ mod tests {
             Distribution::FloatDistribution(FloatDistribution::new(0.0, 1.0, false, None).unwrap()),
         );
         let (_, _, ua, sa, iv) = empty_maps();
-        assert!(FrozenTrial::new(
-            0,
-            TrialState::Complete,
-            Some(1.0),
-            None,
-            Some(now),
-            Some(now),
-            params,
-            dists,
-            ua,
-            sa,
-            iv,
-            0,
-        )
-        .is_err());
+        assert!(
+            FrozenTrial::new(
+                0,
+                TrialState::Complete,
+                Some(1.0),
+                None,
+                Some(now),
+                Some(now),
+                params,
+                dists,
+                ua,
+                sa,
+                iv,
+                0,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -439,20 +461,22 @@ mod tests {
     fn test_nan_values_rejected() {
         let now = Utc::now();
         let (params, dists, ua, sa, iv) = empty_maps();
-        assert!(FrozenTrial::new(
-            0,
-            TrialState::Complete,
-            Some(f64::NAN),
-            None,
-            Some(now),
-            Some(now),
-            params,
-            dists,
-            ua,
-            sa,
-            iv,
-            0,
-        )
-        .is_err());
+        assert!(
+            FrozenTrial::new(
+                0,
+                TrialState::Complete,
+                Some(f64::NAN),
+                None,
+                Some(now),
+                Some(now),
+                params,
+                dists,
+                ua,
+                sa,
+                iv,
+                0,
+            )
+            .is_err()
+        );
     }
 }
