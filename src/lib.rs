@@ -4,6 +4,10 @@
 //! hyperparameter and function optimization, supporting both single-objective
 //! and multi-objective optimization with state-of-the-art algorithms.
 //!
+//! The API and several algorithm implementations are modeled on and adapted from
+//! [Optuna](https://github.com/optuna/optuna) (MIT, © Preferred Networks, Inc.);
+//! see `THIRD_PARTY_NOTICES.md`.
+//!
 //! ## Quick Start
 //!
 //! ```rust
