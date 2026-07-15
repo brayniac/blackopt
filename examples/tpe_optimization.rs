@@ -2,7 +2,7 @@
 //!
 //! Uses the Tree-structured Parzen Estimator to minimize a quadratic function.
 
-use blackopt::{create_study, Sampler, StudyDirection, TpeSamplerBuilder};
+use blackopt::{Sampler, StudyDirection, TpeSamplerBuilder, create_study};
 use std::sync::Arc;
 
 fn main() {

@@ -1,7 +1,7 @@
 mod fixed;
 mod frozen;
-mod state;
 mod handle;
+mod state;
 
 pub use fixed::FixedTrial;
 pub use frozen::FrozenTrial;

@@ -40,14 +40,10 @@ impl PercentilePruner {
             ));
         }
         if interval_steps < 1 {
-            return Err(Error::ValueError(
-                "interval_steps must be >= 1".to_string(),
-            ));
+            return Err(Error::ValueError("interval_steps must be >= 1".to_string()));
         }
         if n_min_trials < 1 {
-            return Err(Error::ValueError(
-                "n_min_trials must be >= 1".to_string(),
-            ));
+            return Err(Error::ValueError("n_min_trials must be >= 1".to_string()));
         }
         Ok(Self {
             percentile,
@@ -211,10 +207,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    fn make_complete_trial(
-        number: i64,
-        intermediate_values: Vec<(i64, f64)>,
-    ) -> FrozenTrial {
+    fn make_complete_trial(number: i64, intermediate_values: Vec<(i64, f64)>) -> FrozenTrial {
         let now = chrono::Utc::now();
         FrozenTrial {
             number,
@@ -231,10 +224,7 @@ mod tests {
         }
     }
 
-    fn make_running_trial(
-        number: i64,
-        intermediate_values: Vec<(i64, f64)>,
-    ) -> FrozenTrial {
+    fn make_running_trial(number: i64, intermediate_values: Vec<(i64, f64)>) -> FrozenTrial {
         let now = chrono::Utc::now();
         FrozenTrial {
             number,
@@ -335,9 +325,10 @@ mod tests {
     #[test]
     fn test_interval_steps() {
         let pruner = PercentilePruner::new(50.0, 0, 0, 3, 1, StudyDirection::Minimize).unwrap();
-        let completed = vec![
-            make_complete_trial(0, vec![(0, 1.0), (1, 1.0), (2, 1.0), (3, 1.0)]),
-        ];
+        let completed = vec![make_complete_trial(
+            0,
+            vec![(0, 1.0), (1, 1.0), (2, 1.0), (3, 1.0)],
+        )];
         // Step 1 is not at an interval boundary (interval=3, warmup=0)
         // The first pruning steps are at 0, 3, 6, ...
         let trial_at_step_1 = make_running_trial(1, vec![(0, 100.0), (1, 100.0)]);

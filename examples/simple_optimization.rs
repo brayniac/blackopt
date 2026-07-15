@@ -2,7 +2,7 @@
 //!
 //! Minimizes f(x, y) = (x - 3)^2 + (y + 2)^2 over [-10, 10]^2.
 
-use blackopt::{create_study, RandomSampler, Sampler, StudyDirection};
+use blackopt::{RandomSampler, Sampler, StudyDirection, create_study};
 use std::sync::Arc;
 
 fn main() {

@@ -141,8 +141,16 @@ mod tests {
 
     #[test]
     fn test_single() {
-        assert!(FloatDistribution::new(1.0, 1.0, false, None).unwrap().single());
-        assert!(!FloatDistribution::new(0.0, 1.0, false, None).unwrap().single());
+        assert!(
+            FloatDistribution::new(1.0, 1.0, false, None)
+                .unwrap()
+                .single()
+        );
+        assert!(
+            !FloatDistribution::new(0.0, 1.0, false, None)
+                .unwrap()
+                .single()
+        );
     }
 
     #[test]

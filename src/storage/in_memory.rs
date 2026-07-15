@@ -67,16 +67,18 @@ impl InMemoryStorage {
 
     /// Get the study info, or error if not found.
     fn get_study(inner: &Inner, study_id: i64) -> Result<&StudyInfo> {
-        inner.studies.get(&study_id).ok_or_else(|| {
-            Error::ValueError(format!("study {study_id} not found"))
-        })
+        inner
+            .studies
+            .get(&study_id)
+            .ok_or_else(|| Error::ValueError(format!("study {study_id} not found")))
     }
 
     /// Get the study info mutably, or error if not found.
     fn get_study_mut(inner: &mut Inner, study_id: i64) -> Result<&mut StudyInfo> {
-        inner.studies.get_mut(&study_id).ok_or_else(|| {
-            Error::ValueError(format!("study {study_id} not found"))
-        })
+        inner
+            .studies
+            .get_mut(&study_id)
+            .ok_or_else(|| Error::ValueError(format!("study {study_id} not found")))
     }
 
     /// Resolve trial_id to (study_id, trial_number).
@@ -105,10 +107,7 @@ impl InMemoryStorage {
         if study.directions.len() != 1 {
             return;
         }
-        let trial_number = study
-            .trials
-            .iter()
-            .position(|t| t.trial_id == trial_id);
+        let trial_number = study.trials.iter().position(|t| t.trial_id == trial_id);
         let trial_number = match trial_number {
             Some(n) => n,
             None => return,
@@ -230,9 +229,7 @@ impl Storage for InMemoryStorage {
             .study_name_to_id
             .get(study_name)
             .copied()
-            .ok_or_else(|| {
-                Error::ValueError(format!("study '{study_name}' not found"))
-            })
+            .ok_or_else(|| Error::ValueError(format!("study '{study_name}' not found")))
     }
 
     fn get_study_name_from_id(&self, study_id: i64) -> Result<String> {
@@ -274,11 +271,7 @@ impl Storage for InMemoryStorage {
             .collect())
     }
 
-    fn create_new_trial(
-        &self,
-        study_id: i64,
-        template_trial: Option<&FrozenTrial>,
-    ) -> Result<i64> {
+    fn create_new_trial(&self, study_id: i64, template_trial: Option<&FrozenTrial>) -> Result<i64> {
         let mut inner = self.inner.lock();
 
         // Get study and compute trial number
@@ -412,9 +405,7 @@ impl Storage for InMemoryStorage {
 
         let study = Self::get_study_mut(&mut inner, study_id)?;
         let trial = &mut study.trials[trial_number as usize];
-        trial
-            .intermediate_values
-            .insert(step, intermediate_value);
+        trial.intermediate_values.insert(step, intermediate_value);
         Ok(())
     }
 
@@ -543,9 +534,11 @@ mod tests {
         storage
             .create_new_study(&[StudyDirection::Minimize], Some("dup"))
             .unwrap();
-        assert!(storage
-            .create_new_study(&[StudyDirection::Minimize], Some("dup"))
-            .is_err());
+        assert!(
+            storage
+                .create_new_study(&[StudyDirection::Minimize], Some("dup"))
+                .is_err()
+        );
     }
 
     #[test]
@@ -582,9 +575,7 @@ mod tests {
         let dist = Distribution::FloatDistribution(
             crate::distributions::FloatDistribution::new(0.0, 1.0, false, None).unwrap(),
         );
-        storage
-            .set_trial_param(tid, "x", 0.5, &dist)
-            .unwrap();
+        storage.set_trial_param(tid, "x", 0.5, &dist).unwrap();
 
         let trial = storage.get_trial(tid).unwrap();
         assert_eq!(trial.params.get("x"), Some(&ParamValue::Float(0.5)));
@@ -636,9 +627,11 @@ mod tests {
             .unwrap();
 
         // Trying to update a finished trial should error
-        assert!(storage
-            .set_trial_state_values(tid, TrialState::Complete, Some(&[2.0]))
-            .is_err());
+        assert!(
+            storage
+                .set_trial_state_values(tid, TrialState::Complete, Some(&[2.0]))
+                .is_err()
+        );
     }
 
     #[test]

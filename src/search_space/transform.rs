@@ -108,11 +108,7 @@ impl SearchSpaceTransform {
 
             match (dist, value) {
                 (Distribution::CategoricalDistribution(d), ParamValue::Categorical(choice)) => {
-                    let idx = d
-                        .choices
-                        .iter()
-                        .position(|c| c == choice)
-                        .unwrap_or(0);
+                    let idx = d.choices.iter().position(|c| c == choice).unwrap_or(0);
                     encoded[range.start + idx] = 1.0;
                 }
                 (Distribution::FloatDistribution(d), ParamValue::Float(v)) => {

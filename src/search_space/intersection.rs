@@ -100,12 +100,7 @@ fn calculate_inner(
             }
             Some(space) => {
                 // Intersect: keep only params with matching distributions
-                space.retain(|name, dist| {
-                    trial
-                        .distributions
-                        .get(name)
-                        .is_some_and(|d| d == dist)
-                });
+                space.retain(|name, dist| trial.distributions.get(name).is_some_and(|d| d == dist));
             }
         }
     }
@@ -153,11 +148,7 @@ mod tests {
                 None
             },
             datetime_start: Some(now),
-            datetime_complete: if state.is_finished() {
-                Some(now)
-            } else {
-                None
-            },
+            datetime_complete: if state.is_finished() { Some(now) } else { None },
             params: p,
             distributions: d,
             user_attrs: HashMap::new(),

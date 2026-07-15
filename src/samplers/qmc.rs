@@ -6,13 +6,15 @@ use parking_lot::Mutex;
 
 use crate::distributions::Distribution;
 use crate::error::Result;
-use crate::samplers::random::RandomSampler;
 use crate::samplers::Sampler;
+use crate::samplers::random::RandomSampler;
 use crate::search_space::{IntersectionSearchSpace, SearchSpaceTransform};
 use crate::trial::FrozenTrial;
 
 /// First 20 primes for Halton sequence bases.
-const PRIMES: [u64; 20] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71];
+const PRIMES: [u64; 20] = [
+    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71,
+];
 
 /// Quasi-Monte Carlo sampler using Halton sequences.
 ///
@@ -94,10 +96,7 @@ fn halton_point(index: u64, dim: usize, scramble: bool, seed: u64) -> Vec<f64> {
 }
 
 impl Sampler for QmcSampler {
-    fn infer_relative_search_space(
-        &self,
-        trials: &[FrozenTrial],
-    ) -> HashMap<String, Distribution> {
+    fn infer_relative_search_space(&self, trials: &[FrozenTrial]) -> HashMap<String, Distribution> {
         self.search_space.lock().calculate(trials)
     }
 
@@ -155,7 +154,7 @@ impl Sampler for QmcSampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::study::{create_study, StudyDirection};
+    use crate::study::{StudyDirection, create_study};
     use std::sync::Arc;
 
     #[test]

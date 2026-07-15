@@ -2,7 +2,7 @@
 //!
 //! Optimizes a bi-objective problem: minimize (x^2, (x-2)^2).
 
-use blackopt::{create_study, NSGAIISamplerBuilder, Sampler, StudyDirection};
+use blackopt::{NSGAIISamplerBuilder, Sampler, StudyDirection, create_study};
 use std::sync::Arc;
 
 fn main() {
@@ -43,6 +43,9 @@ fn main() {
     println!("Found {} Pareto-optimal trials:", pareto.len());
     for trial in &pareto {
         let values = trial.values.as_ref().unwrap();
-        println!("  Trial #{}: f1={:.4}, f2={:.4}", trial.number, values[0], values[1]);
+        println!(
+            "  Trial #{}: f1={:.4}, f2={:.4}",
+            trial.number, values[0], values[1]
+        );
     }
 }

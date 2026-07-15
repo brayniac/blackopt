@@ -3,7 +3,7 @@
 //! Minimizes f(x, y) = (1-x)^2 + 100*(y-x^2)^2, which has a global
 //! minimum of 0 at (1, 1).
 
-use blackopt::{create_study, CmaEsSamplerBuilder, Sampler, StudyDirection};
+use blackopt::{CmaEsSamplerBuilder, Sampler, StudyDirection, create_study};
 use std::sync::Arc;
 
 fn main() {

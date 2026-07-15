@@ -26,18 +26,10 @@ fn log_ndtr(a: f64) -> f64 {
     if a > 6.0 {
         // Phi(a) ~ 1, use: log(1 - Phi(-a))
         let v = ndtr(-a);
-        if v <= 0.0 {
-            0.0
-        } else {
-            (-v).ln_1p()
-        }
+        if v <= 0.0 { 0.0 } else { (-v).ln_1p() }
     } else if a > -20.0 {
         let v = ndtr(a);
-        if v <= 0.0 {
-            f64::NEG_INFINITY
-        } else {
-            v.ln()
-        }
+        if v <= 0.0 { f64::NEG_INFINITY } else { v.ln() }
     } else {
         // Asymptotic expansion for very negative a:
         // log Phi(a) ≈ -a^2/2 - ln(sqrt(2pi)) - ln(-a) + log(1 - 1/a^2)
@@ -162,13 +154,7 @@ pub fn ppf(q: f64, a: f64, b: f64) -> f64 {
 /// Sample from truncated normal: TN(a, b, loc, scale).
 ///
 /// Uses inverse-CDF method: draw uniform q, then ppf(q, a_std, b_std) * scale + loc.
-pub fn rvs(
-    a: &[f64],
-    b: &[f64],
-    loc: &[f64],
-    scale: &[f64],
-    rng: &mut impl rand::Rng,
-) -> Vec<f64> {
+pub fn rvs(a: &[f64], b: &[f64], loc: &[f64], scale: &[f64], rng: &mut impl rand::Rng) -> Vec<f64> {
     let n = a.len();
     let mut result = Vec::with_capacity(n);
     for i in 0..n {

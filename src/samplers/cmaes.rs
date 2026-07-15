@@ -10,8 +10,8 @@ use rand_distr::StandardNormal;
 
 use crate::distributions::Distribution;
 use crate::error::Result;
-use crate::samplers::random::RandomSampler;
 use crate::samplers::Sampler;
+use crate::samplers::random::RandomSampler;
 use crate::search_space::{IntersectionSearchSpace, SearchSpaceTransform};
 use crate::study::StudyDirection;
 use crate::trial::{FrozenTrial, TrialState};
@@ -92,13 +92,11 @@ impl CmaState {
 
         // Adaptation parameters
         let c_sigma = (mu_eff + 2.0) / (n as f64 + mu_eff + 5.0);
-        let d_sigma = 1.0
-            + 2.0 * (((mu_eff - 1.0) / (n as f64 + 1.0)).sqrt() - 1.0).max(0.0)
-            + c_sigma;
+        let d_sigma =
+            1.0 + 2.0 * (((mu_eff - 1.0) / (n as f64 + 1.0)).sqrt() - 1.0).max(0.0) + c_sigma;
         let c_c = (4.0 + mu_eff / n as f64) / (n as f64 + 4.0 + 2.0 * mu_eff / n as f64);
         let c1 = 2.0 / ((n as f64 + 1.3).powi(2) + mu_eff);
-        let c_mu = (2.0 * (mu_eff - 2.0 + 1.0 / mu_eff)
-            / ((n as f64 + 2.0).powi(2) + mu_eff))
+        let c_mu = (2.0 * (mu_eff - 2.0 + 1.0 / mu_eff) / ((n as f64 + 2.0).powi(2) + mu_eff))
             .min(1.0 - c1);
         let chi_n =
             (n as f64).sqrt() * (1.0 - 1.0 / (4.0 * n as f64) + 1.0 / (21.0 * (n as f64).powi(2)));
@@ -155,11 +153,7 @@ impl CmaState {
         self.pending_idx = 0;
 
         for _ in 0..self.lambda {
-            let z: Vec<f64> = (0..self.n)
-                .map(|_| {
-                    rng.sample(StandardNormal)
-                })
-                .collect();
+            let z: Vec<f64> = (0..self.n).map(|_| rng.sample(StandardNormal)).collect();
 
             // y = B * D * z
             let mut y = vec![0.0; self.n];
@@ -218,14 +212,12 @@ impl CmaState {
         // Update evolution path p_sigma
         let cs_comp = (self.c_sigma * (2.0 - self.c_sigma) * self.mu_eff).sqrt();
         for i in 0..self.n {
-            self.p_sigma[i] =
-                (1.0 - self.c_sigma) * self.p_sigma[i] + cs_comp * invsqrt_c_diff[i];
+            self.p_sigma[i] = (1.0 - self.c_sigma) * self.p_sigma[i] + cs_comp * invsqrt_c_diff[i];
         }
 
         // h_sigma: indicator for p_sigma length
         let ps_norm: f64 = self.p_sigma.iter().map(|v| v * v).sum::<f64>().sqrt();
-        let threshold = (1.0 - (1.0 - self.c_sigma).powi(2 * (self.generation as i32 + 1)))
-            .sqrt()
+        let threshold = (1.0 - (1.0 - self.c_sigma).powi(2 * (self.generation as i32 + 1))).sqrt()
             * (1.4 + 2.0 / (self.n as f64 + 1.0))
             * self.chi_n;
         let h_sigma = if ps_norm < threshold { 1.0 } else { 0.0 };
@@ -233,8 +225,7 @@ impl CmaState {
         // Update evolution path p_c
         let cc_comp = (self.c_c * (2.0 - self.c_c) * self.mu_eff).sqrt();
         for i in 0..self.n {
-            self.p_c[i] =
-                (1.0 - self.c_c) * self.p_c[i] + h_sigma * cc_comp * mean_diff[i];
+            self.p_c[i] = (1.0 - self.c_c) * self.p_c[i] + h_sigma * cc_comp * mean_diff[i];
         }
 
         // Update covariance matrix
@@ -249,8 +240,7 @@ impl CmaState {
                     rank_mu += self.weights[k] * yi * yj;
                 }
 
-                self.c[i][j] = (1.0 - self.c1 - self.c_mu + delta_h * self.c1)
-                    * self.c[i][j]
+                self.c[i][j] = (1.0 - self.c1 - self.c_mu + delta_h * self.c1) * self.c[i][j]
                     + self.c1 * rank_one
                     + self.c_mu * rank_mu;
             }
@@ -355,12 +345,10 @@ impl CmaState {
                     new_a[q][i] = new_a[i][q];
                 }
             }
-            new_a[p][p] = cos_t * cos_t * a[p][p]
-                + 2.0 * sin_t * cos_t * a[p][q]
-                + sin_t * sin_t * a[q][q];
-            new_a[q][q] = sin_t * sin_t * a[p][p]
-                - 2.0 * sin_t * cos_t * a[p][q]
-                + cos_t * cos_t * a[q][q];
+            new_a[p][p] =
+                cos_t * cos_t * a[p][p] + 2.0 * sin_t * cos_t * a[p][q] + sin_t * sin_t * a[q][q];
+            new_a[q][q] =
+                sin_t * sin_t * a[p][p] - 2.0 * sin_t * cos_t * a[p][q] + cos_t * cos_t * a[q][q];
             new_a[p][q] = 0.0;
             new_a[q][p] = 0.0;
             a = new_a;
@@ -414,10 +402,7 @@ impl CmaEsSampler {
 }
 
 impl Sampler for CmaEsSampler {
-    fn infer_relative_search_space(
-        &self,
-        trials: &[FrozenTrial],
-    ) -> HashMap<String, Distribution> {
+    fn infer_relative_search_space(&self, trials: &[FrozenTrial]) -> HashMap<String, Distribution> {
         let n_complete = trials
             .iter()
             .filter(|t| t.state == TrialState::Complete)
@@ -465,7 +450,9 @@ impl Sampler for CmaEsSampler {
         // Initialize state if needed
         if state_guard.is_none() {
             let sigma = self.sigma0.unwrap_or(1.0 / 6.0);
-            let lambda = self.popsize.unwrap_or_else(|| Self::default_popsize(n_dims));
+            let lambda = self
+                .popsize
+                .unwrap_or_else(|| Self::default_popsize(n_dims));
 
             // Initialize mean from the best trial
             let best_idx = complete
@@ -671,7 +658,7 @@ impl CmaEsSamplerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::study::{create_study, StudyDirection};
+    use crate::study::{StudyDirection, create_study};
 
     #[test]
     fn test_cmaes_creation() {

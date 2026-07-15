@@ -62,21 +62,21 @@ pub use distributions::{
     ParamValue,
 };
 pub use error::{Error, Result};
-pub use importance::{get_param_importances, FanovaEvaluator, ImportanceEvaluator};
+pub use importance::{FanovaEvaluator, ImportanceEvaluator, get_param_importances};
 pub use multi_objective::{
-    crowding_distance, dominates, fast_non_dominated_sort, get_pareto_front_trials,
-    hypervolume_2d, is_pareto_front,
+    crowding_distance, dominates, fast_non_dominated_sort, get_pareto_front_trials, hypervolume_2d,
+    is_pareto_front,
 };
 pub use pruners::{MedianPruner, NopPruner, PercentilePruner, Pruner};
 pub use samplers::{
     BruteForceSampler, CmaEsCrossover, CmaEsSampler, CmaEsSamplerBuilder, GridSampler,
-    MorboSampler, MorboSamplerBuilder, NSGAIISampler, NSGAIISamplerBuilder, NSGAIIISampler,
-    NSGAIIISamplerBuilder, PartialFixedSampler, QmcSampler, RandomSampler, Sampler, TpeSampler,
+    MorboSampler, MorboSamplerBuilder, NSGAIIISampler, NSGAIIISamplerBuilder, NSGAIISampler,
+    NSGAIISamplerBuilder, PartialFixedSampler, QmcSampler, RandomSampler, Sampler, TpeSampler,
     TpeSamplerBuilder,
 };
 pub use search_space::{IntersectionSearchSpace, SearchSpaceTransform};
 pub use storage::{InMemoryStorage, Storage};
-pub use study::{create_study, FrozenStudy, Study, StudyDirection};
+pub use study::{FrozenStudy, Study, StudyDirection, create_study};
 pub use terminators::{
     MaxTrialsTerminator, NoImprovementTerminator, TargetValueTerminator, Terminator,
 };

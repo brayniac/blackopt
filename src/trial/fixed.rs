@@ -49,9 +49,7 @@ impl FixedTrial {
         match value {
             ParamValue::Float(v) => Ok(v),
             ParamValue::Int(v) => Ok(v as f64),
-            _ => Err(Error::ValueError(format!(
-                "param '{name}' is not a float"
-            ))),
+            _ => Err(Error::ValueError(format!("param '{name}' is not a float"))),
         }
     }
 
@@ -69,9 +67,7 @@ impl FixedTrial {
         match value {
             ParamValue::Int(v) => Ok(v),
             ParamValue::Float(v) => Ok(v as i64),
-            _ => Err(Error::ValueError(format!(
-                "param '{name}' is not an int"
-            ))),
+            _ => Err(Error::ValueError(format!("param '{name}' is not an int"))),
         }
     }
 
@@ -110,7 +106,8 @@ impl FixedTrial {
             )));
         }
 
-        self.suggested_params.insert(name.to_string(), value.clone());
+        self.suggested_params
+            .insert(name.to_string(), value.clone());
         self.distributions.insert(name.to_string(), dist.clone());
         Ok(value)
     }

@@ -1,6 +1,6 @@
 use parking_lot::Mutex;
-use rand_distr::StandardNormal;
 use rand::Rng;
+use rand_distr::StandardNormal;
 
 use super::crossover::{Crossover, RngCore};
 
@@ -125,10 +125,12 @@ impl CovState {
         }
 
         // Sample z ~ N(0, I), then x = mean + L @ z
-        let z: Vec<f64> = (0..n).map(|_| {
-            let v: f64 = rng.sample(StandardNormal);
-            v
-        }).collect();
+        let z: Vec<f64> = (0..n)
+            .map(|_| {
+                let v: f64 = rng.sample(StandardNormal);
+                v
+            })
+            .collect();
 
         let mut child = vec![0.0; n];
         for i in 0..n {
@@ -236,12 +238,15 @@ mod tests {
         // Compute correlation between dim 0 and dim 1.
         let mean0: f64 = children.iter().map(|c| c[0]).sum::<f64>() / children.len() as f64;
         let mean1: f64 = children.iter().map(|c| c[1]).sum::<f64>() / children.len() as f64;
-        let cov01: f64 = children.iter().map(|c| (c[0] - mean0) * (c[1] - mean1)).sum::<f64>()
+        let cov01: f64 = children
+            .iter()
+            .map(|c| (c[0] - mean0) * (c[1] - mean1))
+            .sum::<f64>()
             / children.len() as f64;
-        let var0: f64 = children.iter().map(|c| (c[0] - mean0).powi(2)).sum::<f64>()
-            / children.len() as f64;
-        let var1: f64 = children.iter().map(|c| (c[1] - mean1).powi(2)).sum::<f64>()
-            / children.len() as f64;
+        let var0: f64 =
+            children.iter().map(|c| (c[0] - mean0).powi(2)).sum::<f64>() / children.len() as f64;
+        let var1: f64 =
+            children.iter().map(|c| (c[1] - mean1).powi(2)).sum::<f64>() / children.len() as f64;
         let corr = cov01 / (var0.sqrt() * var1.sqrt());
 
         // Dims 0,1 should be positively correlated.
