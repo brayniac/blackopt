@@ -6,7 +6,7 @@
 
 use indexmap::IndexMap;
 
-use crate::distributions::ParamValue;
+use crate::distributions::{CategoricalChoice, Distribution, ParamValue};
 use crate::error::{Error, Result};
 use crate::study::Study;
 use crate::trial::{FrozenTrial, TrialState};
@@ -25,12 +25,17 @@ pub trait ImportanceEvaluator: Send + Sync {
     ) -> Result<IndexMap<String, f64>>;
 }
 
-/// Functional ANOVA (fANOVA) importance evaluator.
+/// Between-group-variance importance evaluator.
 ///
-/// Estimates parameter importance by computing between-group variance
-/// of objective values when trials are grouped by discretized parameter
-/// values. Parameters that produce large variance between groups are
-/// considered more important.
+/// Estimates parameter importance by grouping trials into equally-spaced
+/// bins of the (discretized) parameter value and computing the variance of
+/// the bin means around the global mean. Parameters whose values separate
+/// the objective into distinct groups are considered more important.
+///
+/// Categorical parameters are grouped by choice index.
+///
+/// This is a fast, model-free approximation of parameter importance; it is
+/// not a true functional ANOVA decomposition.
 pub struct FanovaEvaluator {
     /// Number of bins for discretizing continuous parameters.
     n_bins: usize,
@@ -65,11 +70,24 @@ impl ImportanceEvaluator for FanovaEvaluator {
         let mut raw_importances: Vec<(String, f64)> = Vec::new();
 
         for param_name in params {
+            // Determine this param's categorical choices (if any) from the
+            // first trial that records a distribution for it. This gives a
+            // stable, deterministic numeric code for categorical values
+            // (the choice index) instead of a run-dependent hash.
+            let cat_choices: Option<Vec<CategoricalChoice>> = trials
+                .iter()
+                .find(|t| t.params.contains_key(param_name))
+                .and_then(|t| t.distributions.get(param_name))
+                .and_then(|d| match d {
+                    Distribution::CategoricalDistribution(cd) => Some(cd.choices.clone()),
+                    _ => None,
+                });
+
             // Collect (param_value, objective_value) pairs
             let mut pairs: Vec<(f64, f64)> = Vec::new();
             for (i, trial) in trials.iter().enumerate() {
                 if let Some(pv) = trial.params.get(param_name) {
-                    let internal = param_value_to_f64(pv);
+                    let internal = param_value_to_f64(pv, &cat_choices);
                     pairs.push((internal, target_values[i]));
                 }
             }
@@ -108,17 +126,18 @@ impl ImportanceEvaluator for FanovaEvaluator {
 }
 
 /// Convert a ParamValue to f64 for importance computation.
-fn param_value_to_f64(pv: &ParamValue) -> f64 {
+///
+/// For categorical values, the stable index of the choice within
+/// `cat_choices` is used. If the choice is not found (should not happen when
+/// `cat_choices` comes from the trial's own distribution), 0.0 is returned.
+fn param_value_to_f64(pv: &ParamValue, cat_choices: &Option<Vec<CategoricalChoice>>) -> f64 {
     match pv {
         ParamValue::Float(v) => *v,
         ParamValue::Int(v) => *v as f64,
-        ParamValue::Categorical(c) => {
-            // Use a hash-based approach for categorical values
-            use std::hash::{Hash, Hasher};
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            format!("{c:?}").hash(&mut hasher);
-            (hasher.finish() % 1000) as f64
-        }
+        ParamValue::Categorical(c) => match cat_choices {
+            Some(choices) => choices.iter().position(|x| x == c).unwrap_or(0) as f64,
+            None => 0.0,
+        },
     }
 }
 
@@ -336,6 +355,106 @@ mod tests {
         let study = create_study(None, None, None, None, None, None, false).unwrap();
         let result = get_param_importances(&study, None, None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_param_value_to_f64_categorical_is_deterministic() {
+        use crate::distributions::{CategoricalChoice, CategoricalDistribution};
+        let choices = vec![
+            CategoricalChoice::Str("a".into()),
+            CategoricalChoice::Str("b".into()),
+            CategoricalChoice::Str("c".into()),
+        ];
+        let dist = CategoricalDistribution::new(choices.clone()).unwrap();
+        let cat = Some(dist.choices.clone());
+
+        // Same input must always give the same code (no run-to-run jitter).
+        let a1 = param_value_to_f64(
+            &ParamValue::Categorical(CategoricalChoice::Str("a".into())),
+            &cat,
+        );
+        let a2 = param_value_to_f64(
+            &ParamValue::Categorical(CategoricalChoice::Str("a".into())),
+            &cat,
+        );
+        assert_eq!(a1, a2);
+        assert_eq!(a1, 0.0);
+
+        let b = param_value_to_f64(
+            &ParamValue::Categorical(CategoricalChoice::Str("b".into())),
+            &cat,
+        );
+        assert_eq!(b, 1.0);
+
+        // Distinct choices get distinct, contiguous codes.
+        let c = param_value_to_f64(
+            &ParamValue::Categorical(CategoricalChoice::Str("c".into())),
+            &cat,
+        );
+        assert_eq!(c, 2.0);
+        assert!(a1 < b && b < c);
+    }
+
+    #[test]
+    fn test_importance_categorical_param() {
+        // The categorical param drives the objective; a continuous param is
+        // noise. Importance should rank the categorical param first and be
+        // deterministic across repeated evaluations.
+        let sampler: Arc<dyn crate::samplers::Sampler> = Arc::new(RandomSampler::new(Some(7)));
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            Some(StudyDirection::Minimize),
+            None,
+            false,
+        )
+        .unwrap();
+
+        study
+            .optimize(
+                |trial| {
+                    let mode = trial.suggest_categorical(
+                        "mode",
+                        vec![
+                            CategoricalChoice::Str("lo".to_string()),
+                            CategoricalChoice::Str("mid".to_string()),
+                            CategoricalChoice::Str("hi".to_string()),
+                        ],
+                    )?;
+                    let noise = trial.suggest_float("noise", 0.0, 1.0, false, None)?;
+                    let base = match &mode {
+                        CategoricalChoice::Str(s) if s == "lo" => 0.0,
+                        CategoricalChoice::Str(s) if s == "mid" => 5.0,
+                        _ => 20.0,
+                    };
+                    Ok(base + noise)
+                },
+                Some(120),
+                None,
+                None,
+            )
+            .unwrap();
+
+        let a = get_param_importances(&study, None, None).unwrap();
+        let b = get_param_importances(&study, None, None).unwrap();
+
+        // Deterministic: two evaluations agree exactly.
+        for k in a.keys() {
+            assert!(
+                (a[k] - b[k]).abs() < 1e-15,
+                "importance of {k} must be deterministic"
+            );
+        }
+
+        // The categorical param should dominate the noise param.
+        assert!(
+            a["mode"] > a["noise"],
+            "mode ({}) should be more important than noise ({})",
+            a["mode"],
+            a["noise"]
+        );
     }
 
     #[test]

@@ -18,9 +18,6 @@ pub struct SearchSpaceTransform {
     raw_bounds: Vec<[f64; 2]>,
     /// Maps original param index → range of encoded column indices.
     column_to_encoded_columns: Vec<std::ops::Range<usize>>,
-    /// Maps encoded column index → original param index.
-    #[allow(dead_code)]
-    encoded_column_to_column: Vec<usize>,
     transform_log: bool,
     transform_0_1: bool,
 }
@@ -41,25 +38,21 @@ impl SearchSpaceTransform {
     ) -> Self {
         let mut raw_bounds = Vec::new();
         let mut column_to_encoded_columns = Vec::new();
-        let mut encoded_column_to_column = Vec::new();
 
-        for (col_idx, (_, dist)) in search_space.iter().enumerate() {
+        for (_, dist) in search_space.iter() {
             let start = raw_bounds.len();
             match dist {
                 Distribution::FloatDistribution(d) => {
                     let (lo, hi) = float_bounds(d, transform_log, transform_step);
                     raw_bounds.push([lo, hi]);
-                    encoded_column_to_column.push(col_idx);
                 }
                 Distribution::IntDistribution(d) => {
                     let (lo, hi) = int_bounds(d, transform_log, transform_step);
                     raw_bounds.push([lo, hi]);
-                    encoded_column_to_column.push(col_idx);
                 }
                 Distribution::CategoricalDistribution(d) => {
                     for _ in 0..d.choices.len() {
                         raw_bounds.push([0.0, 1.0]);
-                        encoded_column_to_column.push(col_idx);
                     }
                 }
             }
@@ -71,7 +64,6 @@ impl SearchSpaceTransform {
             search_space,
             raw_bounds,
             column_to_encoded_columns,
-            encoded_column_to_column,
             transform_log,
             transform_0_1,
         }
@@ -99,12 +91,18 @@ impl SearchSpaceTransform {
     }
 
     /// Transform parameter values into encoded space.
-    pub fn transform(&self, params: &IndexMap<String, ParamValue>) -> Vec<f64> {
+    ///
+    /// # Errors
+    ///
+    /// Fails if `params` is missing a parameter present in the search space.
+    pub fn transform(&self, params: &IndexMap<String, ParamValue>) -> Result<Vec<f64>> {
         let mut encoded = vec![0.0; self.raw_bounds.len()];
 
         for (col_idx, (name, dist)) in self.search_space.iter().enumerate() {
             let range = &self.column_to_encoded_columns[col_idx];
-            let value = &params[name];
+            let value = params.get(name).ok_or_else(|| {
+                crate::error::Error::ValueError(format!("transform: missing parameter '{name}'"))
+            })?;
 
             match (dist, value) {
                 (Distribution::CategoricalDistribution(d), ParamValue::Categorical(choice)) => {
@@ -140,7 +138,7 @@ impl SearchSpaceTransform {
             }
         }
 
-        encoded
+        Ok(encoded)
     }
 
     /// Untransform encoded values back to parameter values.
@@ -214,7 +212,7 @@ fn untransform_numerical_float(trans: f64, d: &FloatDistribution, transform_log:
             v
         } else {
             // Half-open [low, high): clamp to just below high
-            v.clamp(d.low, next_down(d.high))
+            v.clamp(d.low, f64::next_down(d.high))
         }
     } else if let Some(step) = d.step {
         let v = ((trans - d.low) / step).round() * step + d.low;
@@ -223,7 +221,7 @@ fn untransform_numerical_float(trans: f64, d: &FloatDistribution, transform_log:
         trans
     } else {
         // Half-open [low, high)
-        trans.clamp(d.low, next_down(d.high))
+        trans.clamp(d.low, f64::next_down(d.high))
     }
 }
 
@@ -272,20 +270,6 @@ fn int_bounds(d: &IntDistribution, transform_log: bool, transform_step: bool) ->
         let hi = d.high as f64;
         (lo - half_step, hi + half_step)
     }
-}
-
-/// Return the largest f64 strictly less than `x`.
-fn next_down(x: f64) -> f64 {
-    // f64::next_down is unstable; use bit manipulation
-    if x.is_nan() || (x.is_infinite() && x < 0.0) {
-        return x;
-    }
-    if x == 0.0 {
-        return -f64::MIN_POSITIVE;
-    }
-    let bits = x.to_bits();
-    let prev_bits = if x > 0.0 { bits - 1 } else { bits + 1 };
-    f64::from_bits(prev_bits)
 }
 
 fn argmax(slice: &[f64]) -> usize {
@@ -351,7 +335,7 @@ mod tests {
 
         let mut params = IndexMap::new();
         params.insert("x".into(), ParamValue::Float(0.5));
-        let encoded = t.transform(&params);
+        let encoded = t.transform(&params).unwrap();
         assert_eq!(encoded.len(), 1);
         assert!((encoded[0] - 0.5).abs() < 1e-10);
 
@@ -375,7 +359,7 @@ mod tests {
 
         let mut params = IndexMap::new();
         params.insert("lr".into(), ParamValue::Float(0.01));
-        let encoded = t.transform(&params);
+        let encoded = t.transform(&params).unwrap();
         // ln(0.01) ≈ -4.605
         assert!((encoded[0] - 0.01_f64.ln()).abs() < 1e-10);
 
@@ -424,7 +408,7 @@ mod tests {
 
         let mut params = IndexMap::new();
         params.insert("n".into(), ParamValue::Int(5));
-        let encoded = t.transform(&params);
+        let encoded = t.transform(&params).unwrap();
         assert!((encoded[0] - 5.0).abs() < 1e-10);
 
         let decoded = t.untransform(&encoded).unwrap();
@@ -451,7 +435,7 @@ mod tests {
             "opt".into(),
             ParamValue::Categorical(CategoricalChoice::Str("adam".into())),
         );
-        let encoded = t.transform(&params);
+        let encoded = t.transform(&params).unwrap();
         assert_eq!(encoded.len(), 2);
         assert!((encoded[0] - 0.0).abs() < 1e-10); // sgd = 0
         assert!((encoded[1] - 1.0).abs() < 1e-10); // adam = 1
@@ -478,7 +462,7 @@ mod tests {
 
         let mut params = IndexMap::new();
         params.insert("x".into(), ParamValue::Float(5.0));
-        let encoded = t.transform(&params);
+        let encoded = t.transform(&params).unwrap();
         assert!((encoded[0] - 0.5).abs() < 1e-10);
 
         let decoded = t.untransform(&encoded).unwrap();
@@ -500,7 +484,7 @@ mod tests {
             ParamValue::Categorical(CategoricalChoice::Str("b".into())),
         );
 
-        let encoded = t.transform(&params);
+        let encoded = t.transform(&params).unwrap();
         assert_eq!(encoded.len(), 5);
 
         let decoded = t.untransform(&encoded).unwrap();

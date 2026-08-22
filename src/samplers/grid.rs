@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use parking_lot::Mutex;
 use rand::SeedableRng;
@@ -14,16 +14,20 @@ use crate::trial::{FrozenTrial, TrialState};
 ///
 ///
 /// Generates a cartesian product of all parameter values, shuffles them,
-/// and assigns grid points to trials. Once all grid points are exhausted,
-/// raises an error.
+/// and assigns grid points to trials in that (seeded) order. Once all grid
+/// points are exhausted, new trials fail with an error.
+///
+/// Grid points are assigned by the `trial_created` hook, which the study
+/// invokes right after a trial is started; the assigned id is recorded on
+/// the trial and served by `sample_independent`.
 pub struct GridSampler {
     /// The parameter grid: param name → list of internal-repr f64 values.
     search_space: HashMap<String, Vec<f64>>,
     /// All grid points as cartesian product, shuffled at construction.
     /// Each entry: Vec of (param_name, value) pairs in stable order.
     all_grids: Vec<Vec<(String, f64)>>,
-    /// RNG for random selection from unvisited grids.
-    rng: Mutex<ChaCha8Rng>,
+    /// Grid ids assigned to trials that are still running.
+    pending: Mutex<HashSet<usize>>,
 }
 
 impl std::fmt::Debug for GridSampler {
@@ -71,7 +75,7 @@ impl GridSampler {
         Self {
             search_space,
             all_grids: grids,
-            rng: Mutex::new(rng),
+            pending: Mutex::new(HashSet::new()),
         }
     }
 
@@ -132,42 +136,43 @@ impl GridSampler {
         }
     }
 
-    /// Get the grid_id for a trial from its system_attrs.
-    fn get_grid_id(trial: &FrozenTrial) -> Option<usize> {
+    /// Read the grid_id recorded on a trial's system attributes.
+    ///
+    /// Returns `None` if not assigned, `Some(-1)` if the sampler has run
+    /// out of grid points.
+    fn get_grid_id(trial: &FrozenTrial) -> Option<i64> {
         trial.system_attrs.get("grid_id").and_then(|v| match v {
-            serde_json::Value::Number(n) => n.as_u64().map(|n| n as usize),
-            serde_json::Value::String(s) => s.parse::<usize>().ok(),
+            serde_json::Value::Number(n) => n.as_i64(),
+            serde_json::Value::String(s) => s.parse::<i64>().ok(),
             _ => None,
         })
     }
 
-    /// Get all grid_ids already assigned to trials.
-    fn get_visited_grid_ids(&self, trials: &[FrozenTrial]) -> Vec<usize> {
-        trials.iter().filter_map(Self::get_grid_id).collect()
-    }
-
-    /// Get unvisited grid indices.
-    fn get_unvisited_grid_ids(&self, trials: &[FrozenTrial]) -> Vec<usize> {
-        let visited: std::collections::HashSet<usize> =
-            self.get_visited_grid_ids(trials).into_iter().collect();
-        (0..self.all_grids.len())
-            .filter(|i| !visited.contains(i))
+    /// Grid ids consumed by trials that actually started evaluating (they
+    /// set at least one parameter) or finished.
+    fn consumed_grid_ids(trials: &[FrozenTrial]) -> HashSet<usize> {
+        trials
+            .iter()
+            .filter_map(|t| {
+                let id = Self::get_grid_id(t).and_then(|id| usize::try_from(id).ok())?;
+                if t.state == TrialState::Complete || !t.params.is_empty() {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
-    /// Pick a grid_id for a trial. Returns the index into all_grids.
-    fn pick_grid_id(&self, trials: &[FrozenTrial]) -> Result<usize> {
-        let unvisited = self.get_unvisited_grid_ids(trials);
-        if unvisited.is_empty() {
-            return Err(Error::ValueError(
-                "GridSampler: all grid points have been visited".to_string(),
-            ));
+    /// Pick the next unvisited grid id in shuffled grid order, reserving it
+    /// as pending until the owning trial finishes.
+    fn pick_next_grid_id(&self, consumed: &HashSet<usize>) -> Option<usize> {
+        let mut pending = self.pending.lock();
+        let id = (0..self.all_grids.len()).find(|i| !consumed.contains(i) && !pending.contains(i));
+        if let Some(id) = id {
+            pending.insert(id);
         }
-
-        // Pick randomly from unvisited.
-        let mut rng = self.rng.lock();
-        let &grid_id = unvisited.choose(&mut *rng).unwrap();
-        Ok(grid_id)
+        id
     }
 }
 
@@ -176,12 +181,14 @@ impl Sampler for GridSampler {
         &self,
         _trials: &[FrozenTrial],
     ) -> HashMap<String, Distribution> {
-        // GridSampler doesn't use relative sampling; everything goes through sample_independent.
+        // GridSampler doesn't use relative sampling; every parameter is
+        // served from the trial's assigned grid point.
         HashMap::new()
     }
 
     fn sample_independent(
         &self,
+        _trials: &[FrozenTrial],
         trial: &FrozenTrial,
         param_name: &str,
         _distribution: &Distribution,
@@ -193,14 +200,16 @@ impl Sampler for GridSampler {
             )));
         }
 
-        // Get or assign grid_id for this trial.
         let grid_id = match Self::get_grid_id(trial) {
-            Some(id) => id,
-            None => {
-                // This shouldn't happen normally — grid_id should be set in before_trial.
-                // Fall back to picking one now.
+            Some(-1) => {
                 return Err(Error::ValueError(
-                    "GridSampler: trial has no grid_id; call before_trial first".to_string(),
+                    "GridSampler: all grid points have been visited".to_string(),
+                ));
+            }
+            Some(id) if id >= 0 => id as usize,
+            _ => {
+                return Err(Error::ValueError(
+                    "GridSampler: trial has no grid_id assigned".to_string(),
                 ));
             }
         };
@@ -224,35 +233,32 @@ impl Sampler for GridSampler {
         )))
     }
 
-    fn before_trial(&self, trials: &[FrozenTrial]) {
-        // This is called before a trial starts. We need to assign a grid_id.
-        // However, we can't modify the trial from here — the study will need to
-        // set the system_attr. We'll store the suggested grid_id so the study
-        // can retrieve it.
-        //
-        // Note: grid_id is set as a system_attr in before_trial
-        // on the trial via study._storage. Since our trait doesn't give us storage
-        // access, the Study::ask() method handles this by calling
-        // `suggest_grid_id()` and setting the system_attr.
-        let _ = trials;
+    fn trial_created(&self, trials: &[FrozenTrial], trial: &crate::trial::Trial) {
+        // Assign this trial's grid point before any parameter is suggested.
+        let consumed = Self::consumed_grid_ids(trials);
+        match self.pick_next_grid_id(&consumed) {
+            Some(id) => {
+                let _ = trial.set_system_attr("grid_id", serde_json::json!(id));
+            }
+            None => {
+                // No unvisited grid points left; mark the trial so suggest
+                // calls fail with a clear message.
+                let _ = trial.set_system_attr("grid_id", serde_json::json!(-1));
+            }
+        }
     }
 
     fn after_trial(
         &self,
         _trials: &[FrozenTrial],
-        _trial: &FrozenTrial,
+        trial: &FrozenTrial,
         _state: TrialState,
         _values: Option<&[f64]>,
     ) {
-    }
-}
-
-impl GridSampler {
-    /// Suggest a grid_id for a new trial. Called by Study::ask().
-    ///
-    /// Returns the grid_id that should be set as system_attr "grid_id".
-    pub fn suggest_grid_id(&self, trials: &[FrozenTrial]) -> Result<usize> {
-        self.pick_grid_id(trials)
+        // Release the in-flight reservation once the trial has finished.
+        if let Some(id) = Self::get_grid_id(trial).and_then(|id| usize::try_from(id).ok()) {
+            self.pending.lock().remove(&id);
+        }
     }
 }
 
@@ -297,22 +303,21 @@ mod tests {
 
         assert_eq!(sampler.all_grids.len(), 4);
 
-        // Assign all 4 grid points.
-        let mut trials = Vec::new();
+        // Assign all 4 grid points (each stays pending until after_trial).
         let mut assigned_ids = Vec::new();
-        for i in 0..4 {
-            let grid_id = sampler.suggest_grid_id(&trials).unwrap();
+        for _ in 0..4 {
+            let grid_id = sampler.pick_next_grid_id(&HashSet::new()).unwrap();
             assigned_ids.push(grid_id);
-            trials.push(make_trial_with_grid_id(i, grid_id, TrialState::Complete));
         }
 
         // All 4 grid_ids should be unique.
-        assigned_ids.sort();
-        assigned_ids.dedup();
-        assert_eq!(assigned_ids.len(), 4);
+        let mut deduped = assigned_ids.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(deduped.len(), 4);
 
-        // 5th trial should error.
-        assert!(sampler.suggest_grid_id(&trials).is_err());
+        // 5th pick should fail (all still pending).
+        assert!(sampler.pick_next_grid_id(&HashSet::new()).is_none());
     }
 
     #[test]
@@ -321,10 +326,10 @@ mod tests {
         space.insert("x".to_string(), vec![1.0, 2.0, 3.0]);
         let sampler = GridSampler::new(space, Some(42));
 
-        let grid_id = sampler.suggest_grid_id(&[]).unwrap();
+        let grid_id = sampler.pick_next_grid_id(&HashSet::new()).unwrap();
         let trial = make_trial_with_grid_id(0, grid_id, TrialState::Running);
         let dist = Distribution::IntDistribution(IntDistribution::new(1, 3, false, 1).unwrap());
-        let val = sampler.sample_independent(&trial, "x", &dist).unwrap();
+        let val = sampler.sample_independent(&[], &trial, "x", &dist).unwrap();
         assert!([1.0, 2.0, 3.0].contains(&val));
     }
 
@@ -374,9 +379,9 @@ mod tests {
         // Same seed should produce same grid order.
         assert_eq!(s1.all_grids, s2.all_grids);
 
-        // Same sequence of grid_id suggestions.
-        let id1 = s1.suggest_grid_id(&[]).unwrap();
-        let id2 = s2.suggest_grid_id(&[]).unwrap();
+        // Same sequence of grid_id assignments.
+        let id1 = s1.pick_next_grid_id(&HashSet::new()).unwrap();
+        let id2 = s2.pick_next_grid_id(&HashSet::new()).unwrap();
         assert_eq!(id1, id2);
     }
 
@@ -390,8 +395,137 @@ mod tests {
             Distribution::FloatDistribution(FloatDistribution::new(0.0, 1.0, false, None).unwrap());
         assert!(
             sampler
-                .sample_independent(&trial, "unknown", &dist)
+                .sample_independent(&[], &trial, "unknown", &dist)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn test_grid_sampler_consumed_ids_ignores_unset_trials() {
+        // A trial with a grid_id but no params (and not complete) has not
+        // consumed its grid point.
+        let not_consumed = make_trial_with_grid_id(0, 3, TrialState::Running);
+        assert!(GridSampler::consumed_grid_ids(std::slice::from_ref(&not_consumed)).is_empty());
+
+        // Once it sets a param, the id is consumed.
+        let mut consumed = not_consumed.clone();
+        consumed
+            .params
+            .insert("x".into(), crate::distributions::ParamValue::Float(1.0));
+        assert_eq!(
+            GridSampler::consumed_grid_ids(&[consumed]),
+            HashSet::from([3])
+        );
+    }
+
+    #[test]
+    fn test_grid_sampler_end_to_end_evaluates_every_combination() {
+        use crate::samplers::Sampler;
+        use crate::study::{StudyDirection, create_study};
+        use std::collections::HashSet;
+        use std::sync::Arc;
+
+        let mut space = HashMap::new();
+        space.insert("x".to_string(), vec![1.0, 2.0]);
+        space.insert("y".to_string(), vec![10.0, 20.0]);
+        let sampler: Arc<dyn Sampler> = Arc::new(GridSampler::new(space, Some(42)));
+
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            Some(StudyDirection::Minimize),
+            None,
+            false,
+        )
+        .unwrap();
+
+        study
+            .optimize(
+                |trial| {
+                    let x = trial.suggest_int("x", 1, 2, false, 1)?;
+                    let y = trial.suggest_int("y", 10, 20, false, 10)?;
+                    Ok(x as f64 + y as f64)
+                },
+                Some(4),
+                None,
+                None,
+            )
+            .unwrap();
+
+        let trials = study.trials().unwrap();
+        let completed: Vec<&FrozenTrial> = trials
+            .iter()
+            .filter(|t| t.state == TrialState::Complete)
+            .collect();
+        assert_eq!(completed.len(), 4, "all 4 grid points should complete");
+
+        let combos: HashSet<(i64, i64)> = completed
+            .iter()
+            .map(|t| {
+                let x = match t.params.get("x").unwrap() {
+                    crate::distributions::ParamValue::Int(v) => *v,
+                    crate::distributions::ParamValue::Float(v) => *v as i64,
+                    _ => panic!("x should be numeric"),
+                };
+                let y = match t.params.get("y").unwrap() {
+                    crate::distributions::ParamValue::Int(v) => *v,
+                    crate::distributions::ParamValue::Float(v) => *v as i64,
+                    _ => panic!("y should be numeric"),
+                };
+                (x, y)
+            })
+            .collect();
+        assert_eq!(combos, HashSet::from([(1, 10), (1, 20), (2, 10), (2, 20)]));
+    }
+
+    #[test]
+    fn test_grid_sampler_end_to_end_exhaustion_fails_clearly() {
+        use crate::samplers::Sampler;
+        use crate::study::{StudyDirection, create_study};
+        use std::sync::Arc;
+
+        let mut space = HashMap::new();
+        space.insert("x".to_string(), vec![1.0, 2.0]);
+        let sampler: Arc<dyn Sampler> = Arc::new(GridSampler::new(space, Some(42)));
+
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            Some(StudyDirection::Minimize),
+            None,
+            false,
+        )
+        .unwrap();
+
+        study
+            .optimize(
+                |trial| {
+                    let x = trial.suggest_int("x", 1, 2, false, 1)?;
+                    Ok(x as f64)
+                },
+                Some(3),
+                None,
+                None,
+            )
+            .unwrap();
+
+        let trials = study.trials().unwrap();
+        let states: Vec<TrialState> = trials.iter().map(|t| t.state).collect();
+        assert_eq!(
+            states,
+            vec![TrialState::Complete, TrialState::Complete, TrialState::Fail]
+        );
+        let failed = trials.iter().find(|t| t.state == TrialState::Fail).unwrap();
+        assert_eq!(
+            failed
+                .system_attrs
+                .get("failure_reason")
+                .and_then(|v| v.as_str()),
+            Some("GridSampler: all grid points have been visited")
         );
     }
 

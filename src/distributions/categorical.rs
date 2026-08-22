@@ -4,8 +4,11 @@ use crate::error::{Error, Result};
 
 /// A value that can appear as a categorical choice.
 ///
+/// Serialized adjacently-tagged (e.g. `{"type": "Str", "value": "a"}`,
+/// `{"type": "Int", "value": 5}`) so that the variant type survives a JSON
+/// round-trip unambiguously.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "type", content = "value")]
 pub enum CategoricalChoice {
     None,
     Bool(bool),

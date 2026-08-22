@@ -13,7 +13,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use crate::distributions::Distribution;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::multi_objective::{get_pareto_front_trials, hypervolume_2d};
 use crate::samplers::Sampler;
 use crate::samplers::random::RandomSampler;
@@ -40,6 +40,15 @@ struct MorboState {
     /// Round-robin index for TR selection.
     next_tr_idx: usize,
     /// Which TR generated the most recent pending trial.
+    ///
+    /// Known limitation: this is a single slot, so it is only correct under
+    /// sequential ask→tell (the pattern `study.optimize` uses). With multiple
+    /// in-flight trials, a second `ask` overwrites the first's credit and
+    /// `after_trial` may attribute a result to the wrong trust region. This
+    /// affects only MORBO's internal TR success/failure bookkeeping (restart /
+    /// shrink decisions), never the study's trial data. A robust fix requires
+    /// correlating a `trial_id` → `tr_idx` at ask time, which needs a `Sampler`
+    /// trait change (passing the new trial's id to `sample_relative`).
     pending_tr_idx: Option<usize>,
     /// Param names in sorted order.
     param_names: Vec<String>,
@@ -53,7 +62,13 @@ struct MorboState {
 
 /// MORBO sampler for multi-objective optimization.
 ///
-/// Uses multiple trust regions with local Gaussian Processes and Thompson sampling.
+/// Uses multiple trust regions with local Gaussian Processes and Thompson
+/// sampling.
+///
+/// MORBO's trust-region management is driven by 2-objective hypervolume, so
+/// the builder requires exactly two objectives (see
+/// [`MorboSamplerBuilder::build`]). For more objectives, use
+/// `NSGAIIISampler`.
 pub struct MorboSampler {
     directions: Vec<StudyDirection>,
     n_startup_trials: usize,
@@ -236,12 +251,13 @@ impl Sampler for MorboSampler {
 
     fn sample_independent(
         &self,
+        trials: &[FrozenTrial],
         trial: &FrozenTrial,
         param_name: &str,
         distribution: &Distribution,
     ) -> Result<f64> {
         self.independent_sampler
-            .sample_independent(trial, param_name, distribution)
+            .sample_independent(trials, trial, param_name, distribution)
     }
 
     fn after_trial(
@@ -291,7 +307,10 @@ impl Sampler for MorboSampler {
             return;
         }
 
-        let encoded = transform.transform(&trial_params);
+        let encoded = match transform.transform(&trial_params) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
         let obs = Observation {
             x: encoded,
             values: values.to_vec(),
@@ -342,7 +361,10 @@ fn encode_trials(
         if !ok {
             continue;
         }
-        let encoded = transform.transform(&trial_params);
+        let encoded = match transform.transform(&trial_params) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
         if let Some(values) = &trial.values {
             observations.push(Observation {
                 x: encoded,
@@ -411,8 +433,8 @@ fn select_diverse_centers(
         // Compute HV without each candidate, pick the one whose removal hurts most.
         let total_hv = compute_hv(pareto_obs, directions);
 
-        for i in 0..n {
-            if used[i] {
+        for (i, &u) in used.iter().enumerate() {
+            if u {
                 continue;
             }
             let without: Vec<Observation> = pareto_obs
@@ -656,9 +678,8 @@ fn sample_with_gp(
     }
     // Also consider candidate values for reference point.
     if n_objectives >= 2 {
-        for c_idx in 0..n_candidates {
-            for obj in 0..2 {
-                let v = thompson_values[obj][c_idx];
+        for obj in 0..2 {
+            for &v in &thompson_values[obj] {
                 if v > ref_point[obj] {
                     ref_point[obj] = v;
                 }
@@ -673,9 +694,9 @@ fn sample_with_gp(
     let mut best_idx = 0;
     let mut best_hv_improvement = f64::NEG_INFINITY;
 
-    for c_idx in 0..n_candidates {
+    for (c_idx, &v0) in thompson_values[0].iter().enumerate() {
         if n_objectives >= 2 {
-            let new_point = [thompson_values[0][c_idx], thompson_values[1][c_idx]];
+            let new_point = [v0, thompson_values[1][c_idx]];
             let mut all_points = current_points.clone();
             all_points.push(new_point);
             let new_hv = hypervolume_2d(&all_points, ref_point);
@@ -686,8 +707,7 @@ fn sample_with_gp(
             }
         } else {
             // Single objective fallback — just pick min Thompson value.
-            let v = thompson_values[0][c_idx];
-            let improvement = -v; // smaller is better (minimizing)
+            let improvement = -v0; // smaller is better (minimizing)
             if improvement > best_hv_improvement {
                 best_hv_improvement = improvement;
                 best_idx = c_idx;
@@ -773,14 +793,26 @@ impl MorboSamplerBuilder {
     }
 
     /// Build the [`MorboSampler`].
-    pub fn build(self) -> MorboSampler {
+    ///
+    /// # Errors
+    ///
+    /// MORBO's hypervolume-based trust-region management requires exactly two
+    /// objectives; any other count is rejected here rather than silently
+    /// degrading to random search at runtime.
+    pub fn build(self) -> Result<MorboSampler> {
+        if self.directions.len() != 2 {
+            return Err(Error::ValueError(format!(
+                "MORBO requires exactly 2 objectives, got {}",
+                self.directions.len()
+            )));
+        }
         let seed = self.seed;
         let rng = match seed {
             Some(s) => ChaCha8Rng::seed_from_u64(s),
             None => ChaCha8Rng::from_entropy(),
         };
 
-        MorboSampler {
+        Ok(MorboSampler {
             directions: self.directions,
             n_startup_trials: self.n_startup_trials.unwrap_or(60),
             n_trust_regions: self.n_trust_regions.unwrap_or(3),
@@ -794,7 +826,7 @@ impl MorboSamplerBuilder {
             state: Mutex::new(None),
             rng: Mutex::new(rng),
             search_space: Mutex::new(IntersectionSearchSpace::new(false)),
-        }
+        })
     }
 }
 
@@ -810,10 +842,33 @@ mod tests {
                 .n_startup_trials(10)
                 .n_trust_regions(2)
                 .seed(42)
-                .build();
+                .build()
+                .unwrap();
 
         assert_eq!(sampler.n_startup_trials, 10);
         assert_eq!(sampler.n_trust_regions, 2);
+    }
+
+    #[test]
+    fn test_morbo_rejects_non_two_objectives() {
+        // One objective.
+        let one = MorboSamplerBuilder::new(vec![StudyDirection::Minimize]).build();
+        assert!(one.is_err());
+
+        // Three objectives.
+        let three = MorboSamplerBuilder::new(vec![
+            StudyDirection::Minimize,
+            StudyDirection::Minimize,
+            StudyDirection::Minimize,
+        ])
+        .build();
+        assert!(three.is_err());
+        assert!(
+            three
+                .unwrap_err()
+                .to_string()
+                .contains("exactly 2 objectives")
+        );
     }
 
     #[test]
@@ -822,7 +877,8 @@ mod tests {
             MorboSamplerBuilder::new(vec![StudyDirection::Minimize, StudyDirection::Minimize])
                 .n_startup_trials(10)
                 .seed(42)
-                .build(),
+                .build()
+                .unwrap(),
         );
 
         let study = create_study(
@@ -862,7 +918,8 @@ mod tests {
                 .n_trust_regions(2)
                 .n_candidates(64)
                 .seed(42)
-                .build(),
+                .build()
+                .unwrap(),
         );
 
         let study = create_study(

@@ -14,7 +14,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use crate::distributions::Distribution;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::samplers::Sampler;
 use crate::samplers::random::RandomSampler;
 use crate::search_space::IntersectionSearchSpace;
@@ -302,28 +302,40 @@ impl Sampler for TpeSampler {
 
     fn sample_independent(
         &self,
+        trials: &[FrozenTrial],
         trial: &FrozenTrial,
         param_name: &str,
         distribution: &Distribution,
     ) -> Result<f64> {
         // During startup, use random sampling.
-        // We check the trial number as a proxy for completed trials count.
-        if (trial.number as usize) < self.n_startup_trials {
+        if self.is_startup(trials) {
             return self
                 .random_sampler
-                .sample_independent(trial, param_name, distribution);
+                .sample_independent(trials, trial, param_name, distribution);
         }
 
-        // For independent (univariate) mode, we don't have access to all trials here.
-        // The study will call us via sample_relative for multivariate mode.
-        // For univariate TPE in sample_independent, we'd need access to study trials.
-        // Since we don't have that context, fall back to random for now.
-        // The proper TPE path goes through sample_relative.
-        //
-        // However, to make univariate TPE work, we store a snapshot of trials
-        // in before_trial and use it here. For now, fall back to random.
-        self.random_sampler
-            .sample_independent(trial, param_name, distribution)
+        // Univariate TPE: model this single parameter against the trial
+        // history. Only consider trials that use the same distribution for
+        // this parameter (different bounds/scales are not comparable).
+        let relevant: Vec<FrozenTrial> = trials
+            .iter()
+            .filter(|t| t.distributions.get(param_name) == Some(distribution))
+            .cloned()
+            .collect();
+        if relevant.len() < 2 {
+            return self
+                .random_sampler
+                .sample_independent(trials, trial, param_name, distribution);
+        }
+
+        let mut space = IndexMap::new();
+        space.insert(param_name.to_string(), distribution.clone());
+
+        let result = self.tpe_sample(&relevant, &space)?;
+        result
+            .get(param_name)
+            .copied()
+            .ok_or_else(|| Error::ValueError(format!("TPE failed to sample '{param_name}'")))
     }
 }
 
@@ -481,7 +493,7 @@ mod tests {
         let dist =
             Distribution::FloatDistribution(FloatDistribution::new(0.0, 1.0, false, None).unwrap());
         // During startup, should sample without error.
-        let v = sampler.sample_independent(&trial, "x", &dist).unwrap();
+        let v = sampler.sample_independent(&[], &trial, "x", &dist).unwrap();
         assert!((0.0..=1.0).contains(&v));
     }
 
@@ -549,6 +561,7 @@ mod tests {
             // Random sampling for both during first 10, then TPE kicks in.
             let x_rand = random
                 .sample_independent(
+                    &[],
                     &FrozenTrial {
                         number: i,
                         state: TrialState::Running,
@@ -592,7 +605,7 @@ mod tests {
                     intermediate_values: HashMap::new(),
                     trial_id: i,
                 };
-                sampler.sample_independent(&t, "x", &dist).unwrap()
+                sampler.sample_independent(&[], &t, "x", &dist).unwrap()
             };
 
             let mut tp = HashMap::new();
@@ -624,5 +637,51 @@ mod tests {
         let sampler = TpeSampler::with_defaults(StudyDirection::Minimize, Some(42));
         let result = sampler.sample_relative(&[], &HashMap::new()).unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_tpe_default_beats_random_end_to_end() {
+        // Regression test: the *default* (univariate) TPE sampler must
+        // actually perform TPE through the full study loop, not silently
+        // fall back to random sampling.
+        use crate::study::create_study;
+        use std::sync::Arc;
+
+        fn run_best_value(sampler: std::sync::Arc<dyn Sampler>) -> f64 {
+            let study = create_study(
+                None,
+                Some(sampler),
+                None,
+                None,
+                Some(StudyDirection::Minimize),
+                None,
+                false,
+            )
+            .unwrap();
+            study
+                .optimize(
+                    |trial| {
+                        let x = trial.suggest_float("x", -5.0, 5.0, false, None)?;
+                        let y = trial.suggest_float("y", -5.0, 5.0, false, None)?;
+                        Ok(x * x + y * y)
+                    },
+                    Some(60),
+                    None,
+                    None,
+                )
+                .unwrap();
+            study.best_value().unwrap()
+        }
+
+        let tpe_best = run_best_value(Arc::new(TpeSampler::with_defaults(
+            StudyDirection::Minimize,
+            Some(42),
+        )));
+        let rand_best = run_best_value(Arc::new(RandomSampler::new(Some(42))));
+
+        assert!(
+            tpe_best < rand_best,
+            "default TPE best={tpe_best} should beat random best={rand_best}"
+        );
     }
 }

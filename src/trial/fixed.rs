@@ -113,16 +113,27 @@ impl FixedTrial {
     }
 
     /// Report an intermediate value (no-op for FixedTrial).
-    pub fn report(&self, _value: f64, _step: i64) {}
+    ///
+    /// Signature matches [`Trial::report`](crate::trial::Trial::report) so a
+    /// FixedTrial can stand in for a Trial in deployment code.
+    pub fn report(&self, _value: f64, _step: i64) -> Result<()> {
+        Ok(())
+    }
 
     /// Check if the trial should be pruned (always false for FixedTrial).
-    pub fn should_prune(&self) -> bool {
-        false
+    ///
+    /// Signature matches [`Trial::should_prune`](crate::trial::Trial::should_prune).
+    pub fn should_prune(&self) -> Result<bool> {
+        Ok(false)
     }
 
     /// Set a user attribute.
-    pub fn set_user_attr(&mut self, key: String, value: serde_json::Value) {
-        self.user_attrs.insert(key, value);
+    ///
+    /// Signature matches [`Trial::set_user_attr`](crate::trial::Trial::set_user_attr)
+    /// (borrows the key and returns a `Result`).
+    pub fn set_user_attr(&mut self, key: &str, value: serde_json::Value) -> Result<()> {
+        self.user_attrs.insert(key.to_string(), value);
+        Ok(())
     }
 
     /// Get the trial number.
@@ -215,6 +226,7 @@ mod tests {
     #[test]
     fn test_should_prune_always_false() {
         let trial = FixedTrial::new(HashMap::new(), 0);
-        assert!(!trial.should_prune());
+        assert!(!trial.should_prune().unwrap());
+        assert!(trial.report(1.0, 0).is_ok());
     }
 }

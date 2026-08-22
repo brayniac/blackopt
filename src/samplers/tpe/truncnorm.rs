@@ -256,7 +256,7 @@ mod tests {
         let samples = rvs(&a, &b, &loc, &scale, &mut rng);
         for &s in &samples {
             assert!(
-                s >= -1.0 - 1e-10 && s <= 1.0 + 1e-10,
+                (-1.0 - 1e-10..=1.0 + 1e-10).contains(&s),
                 "sample {s} out of bounds"
             );
         }

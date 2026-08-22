@@ -168,13 +168,25 @@ impl Study {
         if let Some(fixed) = fixed_distributions {
             for (name, dist) in fixed {
                 if !relative_params.contains_key(name) {
-                    let v = self.sampler.sample_independent(&trial, name, dist)?;
+                    let v = self
+                        .sampler
+                        .sample_independent(&all_trials, &trial, name, dist)?;
                     relative_params.insert(name.clone(), v);
                 }
             }
         }
 
-        Ok(Trial::new(
+        // Enqueued trials carry their pre-specified parameters in the
+        // `fixed_params` system attribute; they take precedence over any
+        // sampler-proposed values.
+        let mut fixed_params: HashMap<String, crate::distributions::ParamValue> = HashMap::new();
+        if let Some(json) = trial.system_attrs.get("fixed_params") {
+            fixed_params = serde_json::from_value(json.clone()).map_err(|e| {
+                Error::StorageInternalError(format!("corrupt fixed_params attribute: {e}"))
+            })?;
+        }
+
+        let trial = Trial::new(
             trial_id,
             self.study_id,
             trial.number,
@@ -182,7 +194,13 @@ impl Study {
             Arc::clone(&self.sampler),
             Arc::clone(&self.pruner),
             relative_params,
-        ))
+            fixed_params,
+        );
+
+        // Let the sampler annotate the new trial before any suggest call.
+        self.sampler.trial_created(&all_trials, &trial);
+
+        Ok(trial)
     }
 
     /// Finalize a trial with a value/values and state.
@@ -248,7 +266,6 @@ impl Study {
             i_trial += 1;
         }
 
-        self.storage.remove_session();
         Ok(())
     }
 
@@ -282,7 +299,6 @@ impl Study {
             i_trial += 1;
         }
 
-        self.storage.remove_session();
         Ok(())
     }
 
@@ -325,7 +341,6 @@ impl Study {
             i_trial += 1;
         }
 
-        self.storage.remove_session();
         Ok(())
     }
 
@@ -365,7 +380,6 @@ impl Study {
             i_trial += 1;
         }
 
-        self.storage.remove_session();
         Ok(())
     }
 
@@ -381,6 +395,11 @@ impl Study {
             Ok(value) => {
                 // Validate the value
                 if value.is_nan() {
+                    let _ = self.storage.set_trial_system_attr(
+                        trial_id,
+                        "failure_reason",
+                        serde_json::json!("objective returned NaN"),
+                    );
                     (TrialState::Fail, None)
                 } else {
                     (TrialState::Complete, Some(vec![value]))
@@ -396,7 +415,15 @@ impl Study {
                     .filter(|v| v.is_finite());
                 (TrialState::Pruned, last_value.map(|v| vec![v]))
             }
-            Err(_e) => (TrialState::Fail, None),
+            Err(e) => {
+                // Record why the trial failed so it is not silently lost.
+                let _ = self.storage.set_trial_system_attr(
+                    trial_id,
+                    "failure_reason",
+                    serde_json::json!(e.to_string()),
+                );
+                (TrialState::Fail, None)
+            }
         };
 
         let frozen = self.tell(trial_id, state, values.as_deref())?;
@@ -425,6 +452,21 @@ impl Study {
         let (state, values) = match func(&mut trial) {
             Ok(vals) => {
                 if vals.iter().any(|v| v.is_nan()) || vals.len() != self.directions.len() {
+                    let reason: std::borrow::Cow<'_, str> = if vals.iter().any(|v| v.is_nan()) {
+                        "objective returned NaN".into()
+                    } else {
+                        format!(
+                            "expected {} objective values, got {}",
+                            self.directions.len(),
+                            vals.len()
+                        )
+                        .into()
+                    };
+                    let _ = self.storage.set_trial_system_attr(
+                        trial_id,
+                        "failure_reason",
+                        serde_json::json!(&*reason),
+                    );
                     (TrialState::Fail, None)
                 } else {
                     (TrialState::Complete, Some(vals))
@@ -439,7 +481,15 @@ impl Study {
                     .filter(|v| v.is_finite());
                 (TrialState::Pruned, last_value.map(|v| vec![v]))
             }
-            Err(_e) => (TrialState::Fail, None),
+            Err(e) => {
+                // Record why the trial failed so it is not silently lost.
+                let _ = self.storage.set_trial_system_attr(
+                    trial_id,
+                    "failure_reason",
+                    serde_json::json!(e.to_string()),
+                );
+                (TrialState::Fail, None)
+            }
         };
 
         let frozen = self.tell(trial_id, state, values.as_deref())?;
@@ -743,6 +793,108 @@ mod tests {
             .unwrap();
         assert_eq!(frozen.state, TrialState::Complete);
         assert_eq!(frozen.values, Some(vec![value]));
+    }
+
+    #[test]
+    fn test_enqueue_trial_uses_enqueued_params() {
+        let sampler: Arc<dyn Sampler> = Arc::new(crate::samplers::RandomSampler::new(Some(42)));
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            Some(StudyDirection::Minimize),
+            None,
+            false,
+        )
+        .unwrap();
+
+        // Enqueue a specific parameter setting; it must run first, verbatim.
+        let mut params = HashMap::new();
+        params.insert(
+            "x".to_string(),
+            crate::distributions::ParamValue::Float(0.5),
+        );
+        params.insert(
+            "y".to_string(),
+            crate::distributions::ParamValue::Float(-2.0),
+        );
+        study.enqueue_trial(params, None).unwrap();
+
+        study
+            .optimize(
+                |trial| {
+                    let x = trial.suggest_float("x", -10.0, 10.0, false, None)?;
+                    let y = trial.suggest_float("y", -10.0, 10.0, false, None)?;
+                    Ok(x * x + y * y)
+                },
+                Some(3),
+                None,
+                None,
+            )
+            .unwrap();
+
+        let trials = study.trials().unwrap();
+        assert_eq!(trials.len(), 3);
+
+        // The enqueued trial runs first and uses the exact values given.
+        let first = &trials[0];
+        assert_eq!(
+            first.params.get("x"),
+            Some(&crate::distributions::ParamValue::Float(0.5))
+        );
+        assert_eq!(
+            first.params.get("y"),
+            Some(&crate::distributions::ParamValue::Float(-2.0))
+        );
+        assert_eq!(first.values.as_ref().unwrap()[0], 0.5 * 0.5 + 4.0);
+    }
+
+    #[test]
+    fn test_failed_trial_records_failure_reason() {
+        let sampler: Arc<dyn Sampler> = Arc::new(crate::samplers::RandomSampler::new(Some(42)));
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            Some(StudyDirection::Minimize),
+            None,
+            false,
+        )
+        .unwrap();
+
+        study
+            .optimize(
+                |trial| {
+                    let x = trial.suggest_float("x", 0.0, 1.0, false, None)?;
+                    if x < 0.5 {
+                        Err(Error::ValueError("boom".into()))
+                    } else {
+                        Ok(x)
+                    }
+                },
+                Some(10),
+                None,
+                None,
+            )
+            .unwrap();
+
+        let trials = study.trials().unwrap();
+        let failed: Vec<&FrozenTrial> = trials
+            .iter()
+            .filter(|t| t.state == TrialState::Fail)
+            .collect();
+        assert!(!failed.is_empty(), "some trials should fail");
+        for t in &failed {
+            assert_eq!(
+                t.system_attrs
+                    .get("failure_reason")
+                    .and_then(|v| v.as_str()),
+                Some("boom"),
+                "failed trials must record why they failed"
+            );
+        }
     }
 
     #[test]

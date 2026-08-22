@@ -9,7 +9,8 @@ Black-box optimization in Rust. Provides automatic hyperparameter search with si
 - **3 pruners**: Median, Percentile, Nop
 - **Pluggable storage** via trait (in-memory included)
 - **Ask-and-tell interface** for external optimization loops
-- **Parameter importance** analysis via fANOVA
+- **Enqueue** specific parameter settings to evaluate (`enqueue_trial`)
+- **Parameter importance** analysis (between-group variance, a fast fANOVA-style approximation)
 - **Terminators** for early stopping (max trials, no improvement, target value)
 - Define-by-run API
 
@@ -47,6 +48,23 @@ fn main() {
 }
 ```
 
+## Enqueueing Trials
+
+You can queue a specific parameter setting so it is evaluated (verbatim, ahead of
+sampler-drawn points). This is useful for evaluating a known-good configuration
+or seeding a search.
+
+```rust
+use std::collections::HashMap;
+use blackopt::ParamValue;
+
+let mut params = HashMap::new();
+params.insert("x".to_string(), ParamValue::Float(0.5));
+params.insert("y".to_string(), ParamValue::Float(-2.0));
+study.enqueue_trial(params, None)?;
+// The next `ask`/`optimize` step runs this exact setting first.
+```
+
 ## Multi-Objective Optimization
 
 ```rust
@@ -79,11 +97,11 @@ println!("Pareto front size: {}", pareto_front.len());
 | Sampler | Use Case | Reference |
 |---------|----------|-----------|
 | `RandomSampler` | Baseline, no assumptions about the objective | |
-| `TpeSampler` | General-purpose Bayesian optimization | Bergstra et al. (2011) |
-| `GridSampler` | Exhaustive search over discrete parameters | |
+| `TpeSampler` | General-purpose Bayesian optimization (univariate by default; multivariate optional) | Bergstra et al. (2011) |
+| `GridSampler` | Exhaustive search over discrete parameters (new trials fail once the grid is exhausted) | |
 | `QmcSampler` | Low-discrepancy sampling (Halton sequences) | Halton (1964) |
 | `CmaEsSampler` | Continuous optimization with covariance adaptation | Hansen & Ostermeier (2001) |
-| `MorboSampler` | Multi-objective Bayesian optimization with trust regions | Daulton et al. (2022) |
+| `MorboSampler` | Multi-objective Bayesian optimization with trust regions (requires exactly 2 objectives) | Daulton et al. (2022) |
 | `NSGAIISampler` | Multi-objective optimization (2-3 objectives) | Deb et al. (2002) |
 | `NSGAIIISampler` | Many-objective optimization (3+ objectives) | Deb & Jain (2014) |
 | `BruteForceSampler` | Enumerate all discrete parameter combinations | |

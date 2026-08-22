@@ -169,7 +169,9 @@ impl Sampler for NSGAIISampler {
                 }
                 // If trial doesn't have all params, fill with 0.5
                 if params.len() == ordered_space.len() {
-                    transform.transform(&params)
+                    transform
+                        .transform(&params)
+                        .unwrap_or_else(|_| vec![0.5; n_dims])
                 } else {
                     vec![0.5; n_dims]
                 }
@@ -229,12 +231,13 @@ impl Sampler for NSGAIISampler {
 
     fn sample_independent(
         &self,
+        trials: &[FrozenTrial],
         trial: &FrozenTrial,
         param_name: &str,
         distribution: &Distribution,
     ) -> Result<f64> {
         self.random_sampler
-            .sample_independent(trial, param_name, distribution)
+            .sample_independent(trials, trial, param_name, distribution)
     }
 }
 

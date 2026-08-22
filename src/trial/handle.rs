@@ -25,6 +25,8 @@ pub struct Trial {
     number: i64,
     /// Relative param values pre-sampled by the sampler (internal repr).
     relative_params: HashMap<String, f64>,
+    /// Pre-specified (enqueued) param values; take precedence over the sampler.
+    fixed_params: HashMap<String, crate::distributions::ParamValue>,
 }
 
 impl Trial {
@@ -38,6 +40,7 @@ impl Trial {
         sampler: Arc<dyn Sampler>,
         pruner: Arc<dyn Pruner>,
         relative_params: HashMap<String, f64>,
+        fixed_params: HashMap<String, crate::distributions::ParamValue>,
     ) -> Self {
         Self {
             trial_id,
@@ -47,6 +50,7 @@ impl Trial {
             pruner,
             number,
             relative_params,
+            fixed_params,
         }
     }
 
@@ -111,8 +115,15 @@ impl Trial {
     /// Core suggest logic: check if already suggested or in relative params,
     /// otherwise fall back to independent sampling.
     fn suggest(&mut self, name: &str, dist: &Distribution) -> Result<f64> {
+        // Fetch the full trial history once per suggest; the current trial is
+        // included (it exists before any parameter is suggested).
+        let all_trials = self.storage.get_all_trials(self.study_id, None)?;
+        let existing = all_trials
+            .iter()
+            .find(|t| t.trial_id == self.trial_id)
+            .ok_or_else(|| Error::ValueError(format!("trial {} not found", self.trial_id)))?;
+
         // Check if this param was already set (re-suggest returns same value)
-        let existing = self.storage.get_trial(self.trial_id)?;
         if let Some(existing_dist) = existing.distributions.get(name) {
             if existing_dist != dist {
                 return Err(Error::ValueError(format!(
@@ -123,12 +134,16 @@ impl Trial {
             return dist.to_internal_repr(val);
         }
 
-        // Check if we have a pre-sampled relative param
-        let internal = if let Some(&v) = self.relative_params.get(name) {
+        // Enqueued (fixed) values take precedence, then relative params, then
+        // independent sampling.
+        let internal = if let Some(pv) = self.fixed_params.get(name) {
+            dist.to_internal_repr(pv)?
+        } else if let Some(&v) = self.relative_params.get(name) {
             v
         } else {
             // Fall back to independent sampling
-            self.sampler.sample_independent(&existing, name, dist)?
+            self.sampler
+                .sample_independent(&all_trials, existing, name, dist)?
         };
 
         // Record the param in storage

@@ -17,6 +17,11 @@ pub struct FloatDistribution {
 impl FloatDistribution {
     /// Create a new `FloatDistribution` with validation.
     pub fn new(low: f64, high: f64, log: bool, step: Option<f64>) -> Result<Self> {
+        if low.is_nan() || high.is_nan() {
+            return Err(Error::InvalidDistribution(format!(
+                "low and high must not be NaN, got low={low}, high={high}"
+            )));
+        }
         if log && step.is_some() {
             return Err(Error::InvalidDistribution(
                 "cannot combine log-scale with discretization step".into(),
@@ -33,10 +38,10 @@ impl FloatDistribution {
             )));
         }
         if let Some(s) = step
-            && s <= 0.0
+            && (s.is_nan() || s <= 0.0)
         {
             return Err(Error::InvalidDistribution(format!(
-                "step must be > 0, got step={s}"
+                "step must be finite and > 0, got step={s}"
             )));
         }
         Ok(Self {
@@ -117,6 +122,13 @@ mod tests {
     fn test_negative_step() {
         assert!(FloatDistribution::new(0.0, 1.0, false, Some(-0.1)).is_err());
         assert!(FloatDistribution::new(0.0, 1.0, false, Some(0.0)).is_err());
+    }
+
+    #[test]
+    fn test_nan_bounds_rejected() {
+        assert!(FloatDistribution::new(f64::NAN, 1.0, false, None).is_err());
+        assert!(FloatDistribution::new(0.0, f64::NAN, false, None).is_err());
+        assert!(FloatDistribution::new(0.0, 1.0, false, Some(f64::NAN)).is_err());
     }
 
     #[test]

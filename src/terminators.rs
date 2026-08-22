@@ -35,7 +35,12 @@ impl Terminator for MaxTrialsTerminator {
     }
 }
 
-/// Stops optimization when no improvement has been observed for `patience` trials.
+/// Stops optimization when no improvement has been observed for `patience`
+/// trials.
+///
+/// "Trials" here means *finished* trials (complete, failed, or pruned): a
+/// run of failures or prunings counts as a run without improvement, so a
+/// sampler that keeps failing will stop the loop instead of spinning forever.
 pub struct NoImprovementTerminator {
     patience: usize,
 }
@@ -50,7 +55,13 @@ impl NoImprovementTerminator {
 
 impl Terminator for NoImprovementTerminator {
     fn should_terminate(&self, study: &Study) -> bool {
-        let Ok(trials) = study.get_trials(Some(&[TrialState::Complete])) else {
+        // Count all finished trials: failures and prunings count against
+        // patience as much as completed trials do.
+        let Ok(trials) = study.get_trials(Some(&[
+            TrialState::Complete,
+            TrialState::Fail,
+            TrialState::Pruned,
+        ])) else {
             return false;
         };
 
@@ -190,6 +201,41 @@ mod tests {
 
         // With 20 random trials, the terminator should at least be callable
         let _ = term.should_terminate(&study);
+    }
+
+    #[test]
+    fn test_no_improvement_terminator_counts_failures() {
+        // A stream of failing trials must count against patience — otherwise
+        // a perpetually-failing sampler would never stop the loop.
+        let term = NoImprovementTerminator::new(3);
+        let sampler: Arc<dyn crate::samplers::Sampler> = Arc::new(RandomSampler::new(Some(42)));
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            Some(StudyDirection::Minimize),
+            None,
+            false,
+        )
+        .unwrap();
+
+        study
+            .optimize(
+                |trial| {
+                    let _ = trial.suggest_float("x", 0.0, 1.0, false, None)?;
+                    Err(crate::error::Error::ValueError("always fails".into()))
+                },
+                Some(10),
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert!(
+            term.should_terminate(&study),
+            "4+ failures with patience 3 should terminate"
+        );
     }
 
     #[test]

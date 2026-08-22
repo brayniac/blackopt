@@ -360,14 +360,16 @@ impl ParzenEstimator {
 
                     // Round discrete.
                     if let Some(st) = step {
-                        // Recover original low/high before step extension.
+                        // Recover the original bounds: the ±st/2 extension was
+                        // applied in linear space *before* the log transform,
+                        // so undo the log first, then add the half-step back.
                         let orig_low = if *log {
-                            (low + st / 2.0).exp()
+                            low.exp() + st / 2.0
                         } else {
                             low + st / 2.0
                         };
                         let orig_high = if *log {
-                            (high - st / 2.0).exp()
+                            high.exp() - st / 2.0
                         } else {
                             high - st / 2.0
                         };
@@ -585,7 +587,7 @@ mod tests {
         let samples = pe.sample(&mut rng, 10);
         assert_eq!(samples["x"].len(), 10);
         for &v in &samples["x"] {
-            assert!(v >= 0.0 && v <= 10.0, "sample {v} out of bounds");
+            assert!((0.0..=10.0).contains(&v), "sample {v} out of bounds");
         }
     }
 
@@ -602,7 +604,7 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let samples = pe.sample(&mut rng, 100);
         for &v in &samples["x"] {
-            assert!(v >= 0.0 && v <= 10.0, "sample {v} out of bounds");
+            assert!((0.0..=10.0).contains(&v), "sample {v} out of bounds");
         }
 
         // log_pdf should return finite values for in-range samples
@@ -636,7 +638,7 @@ mod tests {
         let samples = pe.sample(&mut rng, 100);
         for &v in &samples["opt"] {
             assert!(
-                v >= 0.0 && v < 3.0 && (v - v.round()).abs() < 1e-10,
+                (0.0..3.0).contains(&v) && (v - v.round()).abs() < 1e-10,
                 "categorical sample {v} invalid"
             );
         }
@@ -660,7 +662,7 @@ mod tests {
         let samples = pe.sample(&mut rng, 100);
         for &v in &samples["lr"] {
             assert!(
-                v >= 0.001 - 1e-10 && v <= 1.0 + 1e-10,
+                (0.001 - 1e-10..=1.0 + 1e-10).contains(&v),
                 "log-scale sample {v} out of bounds"
             );
         }
@@ -683,7 +685,7 @@ mod tests {
         for &v in &samples["n"] {
             let iv = v as i64;
             assert!(
-                iv >= 0 && iv <= 10 && iv % 2 == 0,
+                (0..=10).contains(&iv) && iv % 2 == 0,
                 "int step sample {v} invalid"
             );
         }
@@ -693,5 +695,35 @@ mod tests {
     fn test_logsumexp() {
         assert!((logsumexp(&[0.0, 0.0]) - 2.0_f64.ln()).abs() < 1e-10);
         assert!((logsumexp(&[-1000.0, -1000.0]) - (-1000.0 + 2.0_f64.ln())).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_parzen_estimator_log_int_on_grid() {
+        // Regression: log-scale integer params must sample exactly on the
+        // integer grid (the half-step bounds extension happens in linear
+        // space before the log transform).
+        let mut ss = IndexMap::new();
+        ss.insert(
+            "n".to_string(),
+            Distribution::IntDistribution(IntDistribution::new(1, 100, true, 1).unwrap()),
+        );
+
+        let mut obs = HashMap::new();
+        obs.insert("n".to_string(), vec![2.0, 5.0, 12.0, 40.0]);
+
+        let pe = ParzenEstimator::new(&obs, &ss, &ParzenEstimatorParameters::default(), None);
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+        let samples = pe.sample(&mut rng, 200);
+        for &v in &samples["n"] {
+            assert!(
+                (v - v.round()).abs() < 1e-9,
+                "log-int sample {v} is not an integer"
+            );
+            let iv = v as i64;
+            assert!(
+                (1..=100).contains(&iv),
+                "log-int sample {iv} out of [1, 100]"
+            );
+        }
     }
 }
