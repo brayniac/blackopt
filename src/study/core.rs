@@ -143,11 +143,47 @@ impl Study {
             None => self.storage.create_new_trial(self.study_id, None)?,
         };
 
-        let trial = self.storage.get_trial(trial_id)?;
+        let frozen = self.storage.get_trial(trial_id)?;
         let all_trials = self.storage.get_all_trials(self.study_id, None)?;
 
         // Run sampler hooks
         self.sampler.before_trial(&all_trials);
+
+        // Enqueued trials carry their pre-specified parameters in the
+        // `fixed_params` system attribute; they take precedence over any
+        // sampler-proposed values. Read them up front: whether this trial's
+        // point was chosen by the user or by the sampler changes what the
+        // sampler should be asked to do below.
+        let mut fixed_params: HashMap<String, crate::distributions::ParamValue> = HashMap::new();
+        if let Some(json) = frozen.system_attrs.get("fixed_params") {
+            fixed_params = serde_json::from_value(json.clone()).map_err(|e| {
+                Error::StorageInternalError(format!("corrupt fixed_params attribute: {e}"))
+            })?;
+        }
+        let is_enqueued = !fixed_params.is_empty();
+
+        let mut trial = Trial::new(
+            trial_id,
+            self.study_id,
+            frozen.number,
+            Arc::clone(&self.storage),
+            Arc::clone(&self.sampler),
+            Arc::clone(&self.pruner),
+            HashMap::new(),
+            fixed_params,
+        );
+
+        // Let the sampler annotate the new trial before anything is sampled.
+        // Skipped for enqueued trials: the sampler did not choose this point,
+        // so reserving a resource for it (a GridSampler grid point, say)
+        // would silently consume a candidate that never gets evaluated.
+        if !is_enqueued {
+            self.sampler.trial_created(&all_trials, &trial)?;
+        }
+
+        // Re-read the trial so the sampling below sees whatever the hook
+        // recorded on it.
+        let frozen = self.storage.get_trial(trial_id)?;
 
         // Determine search space: fixed_distributions override sampler's relative space
         let search_space = if let Some(fixed) = fixed_distributions {
@@ -156,49 +192,32 @@ impl Study {
             self.sampler.infer_relative_search_space(&all_trials)
         };
 
-        // Sample relative params
-        let mut relative_params = if !search_space.is_empty() {
-            self.sampler.sample_relative(&all_trials, &search_space)?
-        } else {
+        // Sample relative params. An enqueued trial's values are already
+        // decided, so don't ask the sampler to propose a point it would only
+        // discard — a stateful sampler would otherwise book credit for a
+        // candidate that is never evaluated.
+        let mut relative_params = if is_enqueued || search_space.is_empty() {
             HashMap::new()
+        } else {
+            self.sampler.sample_relative(&all_trials, &search_space)?
         };
 
         // For any distributions not covered by relative sampling,
         // do independent sampling
-        if let Some(fixed) = fixed_distributions {
+        if let Some(fixed) = fixed_distributions
+            && !is_enqueued
+        {
             for (name, dist) in fixed {
                 if !relative_params.contains_key(name) {
                     let v = self
                         .sampler
-                        .sample_independent(&all_trials, &trial, name, dist)?;
+                        .sample_independent(&all_trials, &frozen, name, dist)?;
                     relative_params.insert(name.clone(), v);
                 }
             }
         }
 
-        // Enqueued trials carry their pre-specified parameters in the
-        // `fixed_params` system attribute; they take precedence over any
-        // sampler-proposed values.
-        let mut fixed_params: HashMap<String, crate::distributions::ParamValue> = HashMap::new();
-        if let Some(json) = trial.system_attrs.get("fixed_params") {
-            fixed_params = serde_json::from_value(json.clone()).map_err(|e| {
-                Error::StorageInternalError(format!("corrupt fixed_params attribute: {e}"))
-            })?;
-        }
-
-        let trial = Trial::new(
-            trial_id,
-            self.study_id,
-            trial.number,
-            Arc::clone(&self.storage),
-            Arc::clone(&self.sampler),
-            Arc::clone(&self.pruner),
-            relative_params,
-            fixed_params,
-        );
-
-        // Let the sampler annotate the new trial before any suggest call.
-        self.sampler.trial_created(&all_trials, &trial);
+        trial.set_relative_params(relative_params);
 
         Ok(trial)
     }
@@ -383,6 +402,18 @@ impl Study {
         Ok(())
     }
 
+    /// Describe any enqueued parameters the objective never suggested.
+    fn unconsumed_enqueued_reason(&self, trial: &Trial) -> Result<Option<String>> {
+        let unconsumed = trial.unconsumed_fixed_params()?;
+        if unconsumed.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(format!(
+            "enqueued parameter(s) never suggested by the objective: {}",
+            unconsumed.join(", ")
+        )))
+    }
+
     /// Execute a single trial (single-objective).
     fn run_trial<F>(&self, func: &F, callbacks: Option<&[&dyn Callback]>) -> Result<()>
     where
@@ -399,6 +430,13 @@ impl Study {
                         trial_id,
                         "failure_reason",
                         serde_json::json!("objective returned NaN"),
+                    );
+                    (TrialState::Fail, None)
+                } else if let Some(reason) = self.unconsumed_enqueued_reason(&trial)? {
+                    let _ = self.storage.set_trial_system_attr(
+                        trial_id,
+                        "failure_reason",
+                        serde_json::json!(reason),
                     );
                     (TrialState::Fail, None)
                 } else {
@@ -451,7 +489,14 @@ impl Study {
 
         let (state, values) = match func(&mut trial) {
             Ok(vals) => {
-                if vals.iter().any(|v| v.is_nan()) || vals.len() != self.directions.len() {
+                if let Some(reason) = self.unconsumed_enqueued_reason(&trial)? {
+                    let _ = self.storage.set_trial_system_attr(
+                        trial_id,
+                        "failure_reason",
+                        serde_json::json!(reason),
+                    );
+                    (TrialState::Fail, None)
+                } else if vals.iter().any(|v| v.is_nan()) || vals.len() != self.directions.len() {
                     let reason: std::borrow::Cow<'_, str> = if vals.iter().any(|v| v.is_nan()) {
                         "objective returned NaN".into()
                     } else {
@@ -1138,5 +1183,202 @@ mod tests {
         // With 40 random trials, should find something reasonable
         let best_val = study.best_value().unwrap();
         assert!(best_val < 30.0, "best value {best_val} should be < 30");
+    }
+
+    #[test]
+    fn test_best_trial_keeps_infinite_objective() {
+        // Regression: filtering to finite values silently dropped the true
+        // optimum when an infinite penalty was the best (or only) score.
+        let sampler: Arc<dyn Sampler> = Arc::new(crate::samplers::RandomSampler::new(Some(42)));
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            Some(StudyDirection::Maximize),
+            None,
+            false,
+        )
+        .unwrap();
+
+        let values = [1.0, 1.0, f64::INFINITY, 1.0];
+        let i = std::sync::atomic::AtomicUsize::new(0);
+        study
+            .optimize(
+                |trial| {
+                    let _x = trial.suggest_float("x", 0.0, 1.0, false, None)?;
+                    Ok(values[i.fetch_add(1, std::sync::atomic::Ordering::SeqCst)])
+                },
+                Some(4),
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(study.best_trial().unwrap().number, 2);
+        assert_eq!(study.best_value().unwrap(), f64::INFINITY);
+    }
+
+    #[test]
+    fn test_enqueued_param_never_suggested_fails_trial() {
+        // An enqueued trial is a request to evaluate one specific
+        // configuration. If a name is never suggested — a typo, say — that
+        // configuration was not what ran, and the trial must say so instead
+        // of silently completing as an ordinary sampled trial.
+        let sampler: Arc<dyn Sampler> = Arc::new(crate::samplers::RandomSampler::new(Some(42)));
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            Some(StudyDirection::Minimize),
+            None,
+            false,
+        )
+        .unwrap();
+
+        let mut params = HashMap::new();
+        params.insert(
+            "typo".to_string(),
+            crate::distributions::ParamValue::Float(0.5),
+        );
+        study.enqueue_trial(params, None).unwrap();
+
+        study
+            .optimize(
+                |trial| {
+                    let x = trial.suggest_float("x", 0.0, 1.0, false, None)?;
+                    Ok(x)
+                },
+                Some(1),
+                None,
+                None,
+            )
+            .unwrap();
+
+        let first = &study.trials().unwrap()[0];
+        assert_eq!(first.state, TrialState::Fail);
+        assert_eq!(
+            first
+                .system_attrs
+                .get("failure_reason")
+                .and_then(|v| v.as_str()),
+            Some("enqueued parameter(s) never suggested by the objective: typo")
+        );
+    }
+
+    #[test]
+    fn test_enqueued_non_integral_float_for_int_param_fails() {
+        // Regression: Float(2.7) for an integer parameter was truncated to 2
+        // and reported as a success, evaluating a different configuration
+        // than the one enqueued.
+        let sampler: Arc<dyn Sampler> = Arc::new(crate::samplers::RandomSampler::new(Some(42)));
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            Some(StudyDirection::Minimize),
+            None,
+            false,
+        )
+        .unwrap();
+
+        let mut params = HashMap::new();
+        params.insert(
+            "x".to_string(),
+            crate::distributions::ParamValue::Float(2.7),
+        );
+        study.enqueue_trial(params, None).unwrap();
+
+        study
+            .optimize(
+                |trial| {
+                    let x = trial.suggest_int("x", 0, 10, false, 1)?;
+                    Ok(x as f64)
+                },
+                Some(1),
+                None,
+                None,
+            )
+            .unwrap();
+
+        let first = &study.trials().unwrap()[0];
+        assert_eq!(first.state, TrialState::Fail);
+        assert!(
+            first
+                .system_attrs
+                .get("failure_reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .contains("enqueued value for parameter 'x'"),
+            "reason should point at the enqueued value: {:?}",
+            first.system_attrs.get("failure_reason")
+        );
+    }
+
+    #[test]
+    fn test_stepped_distributions_with_off_grid_high_complete() {
+        // Regression: samplers clamp to `high`, but for a step whose grid
+        // does not land on `high` that clamp target was not a value the
+        // distribution contained, so storage rejected it and trials failed
+        // silently — `optimize` still returned Ok.
+        let samplers: Vec<(&str, Arc<dyn Sampler>)> = vec![
+            (
+                "random",
+                Arc::new(crate::samplers::RandomSampler::new(Some(42))),
+            ),
+            (
+                "tpe",
+                Arc::new(crate::samplers::TpeSampler::with_defaults(
+                    StudyDirection::Minimize,
+                    Some(42),
+                )),
+            ),
+            (
+                "qmc",
+                Arc::new(crate::samplers::QmcSampler::new(None, Some(42))),
+            ),
+        ];
+
+        for (name, sampler) in samplers {
+            let study = create_study(
+                None,
+                Some(sampler),
+                None,
+                None,
+                Some(StudyDirection::Minimize),
+                None,
+                false,
+            )
+            .unwrap();
+
+            study
+                .optimize(
+                    |trial| {
+                        // Neither grid lands on its declared `high`.
+                        let x = trial.suggest_float("x", 0.0, 1.0, false, Some(0.3))?;
+                        let n = trial.suggest_int("n", 0, 10, false, 3)?;
+                        Ok(-(x + n as f64))
+                    },
+                    Some(60),
+                    None,
+                    None,
+                )
+                .unwrap();
+
+            let failed: Vec<_> = study
+                .trials()
+                .unwrap()
+                .into_iter()
+                .filter(|t| t.state == TrialState::Fail)
+                .collect();
+            assert!(
+                failed.is_empty(),
+                "{name}: {} trials failed, e.g. {:?}",
+                failed.len(),
+                failed[0].system_attrs.get("failure_reason")
+            );
+        }
     }
 }

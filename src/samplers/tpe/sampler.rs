@@ -102,14 +102,14 @@ impl TpeSampler {
     /// Split trials into below (good) and above (bad) groups.
     fn split_trials<'a>(
         &self,
-        trials: &'a [FrozenTrial],
+        trials: &[&'a FrozenTrial],
     ) -> (Vec<&'a FrozenTrial>, Vec<&'a FrozenTrial>) {
         // Separate complete vs pruned vs running.
         let mut complete: Vec<&FrozenTrial> = Vec::new();
         let mut pruned: Vec<&FrozenTrial> = Vec::new();
         let mut running: Vec<&FrozenTrial> = Vec::new();
 
-        for t in trials {
+        for &t in trials {
             match t.state {
                 TrialState::Complete => complete.push(t),
                 TrialState::Pruned => pruned.push(t),
@@ -222,7 +222,7 @@ impl TpeSampler {
     /// Sample using TPE for a given search space.
     fn tpe_sample(
         &self,
-        trials: &[FrozenTrial],
+        trials: &[&FrozenTrial],
         search_space: &IndexMap<String, Distribution>,
     ) -> Result<HashMap<String, f64>> {
         let (below, above) = self.split_trials(trials);
@@ -297,7 +297,8 @@ impl Sampler for TpeSampler {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
-        self.tpe_sample(trials, &ordered)
+        let refs: Vec<&FrozenTrial> = trials.iter().collect();
+        self.tpe_sample(&refs, &ordered)
     }
 
     fn sample_independent(
@@ -307,6 +308,15 @@ impl Sampler for TpeSampler {
         param_name: &str,
         distribution: &Distribution,
     ) -> Result<f64> {
+        // A single-valued distribution has zero width, which would make
+        // every kernel bandwidth zero and the truncated-normal draw NaN.
+        // There is exactly one legal value; let the random sampler return it.
+        if distribution.single() {
+            return self
+                .random_sampler
+                .sample_independent(trials, trial, param_name, distribution);
+        }
+
         // During startup, use random sampling.
         if self.is_startup(trials) {
             return self
@@ -317,12 +327,19 @@ impl Sampler for TpeSampler {
         // Univariate TPE: model this single parameter against the trial
         // history. Only consider trials that use the same distribution for
         // this parameter (different bounds/scales are not comparable).
-        let relevant: Vec<FrozenTrial> = trials
+        let relevant: Vec<&FrozenTrial> = trials
             .iter()
             .filter(|t| t.distributions.get(param_name) == Some(distribution))
-            .cloned()
             .collect();
-        if relevant.len() < 2 {
+        // `split_trials` only models Complete and Pruned trials, so count
+        // those rather than the raw length: two failed trials would
+        // otherwise put us on the TPE path with no observations at all,
+        // silently returning a centre-biased draw instead of a random one.
+        let n_usable = relevant
+            .iter()
+            .filter(|t| matches!(t.state, TrialState::Complete | TrialState::Pruned))
+            .count();
+        if n_usable < 2 {
             return self
                 .random_sampler
                 .sample_independent(trials, trial, param_name, distribution);
@@ -507,7 +524,8 @@ mod tests {
             trials.push(make_complete_trial(i, i as f64, params));
         }
 
-        let (below, above) = sampler.split_trials(&trials);
+        let trial_refs: Vec<&FrozenTrial> = trials.iter().collect();
+        let (below, above) = sampler.split_trials(&trial_refs);
         // gamma(20) = ceil(20 * 0.15) = 3
         assert_eq!(below.len(), 3);
         // Below should have the best (lowest) values: 0.0, 1.0, 2.0
@@ -683,5 +701,98 @@ mod tests {
             tpe_best < rand_best,
             "default TPE best={tpe_best} should beat random best={rand_best}"
         );
+    }
+
+    #[test]
+    fn test_tpe_handles_single_valued_distribution() {
+        // Regression: a zero-width range makes every kernel bandwidth zero,
+        // so the truncated-normal draw came back NaN and storage validation
+        // failed every trial after startup.
+        use crate::study::create_study;
+        use std::sync::Arc;
+
+        let sampler: Arc<dyn Sampler> = Arc::new(TpeSampler::with_defaults(
+            StudyDirection::Minimize,
+            Some(42),
+        ));
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            Some(StudyDirection::Minimize),
+            None,
+            false,
+        )
+        .unwrap();
+
+        study
+            .optimize(
+                |trial| {
+                    let c = trial.suggest_float("c", 1.0, 1.0, false, None)?;
+                    let x = trial.suggest_float("x", -5.0, 5.0, false, None)?;
+                    Ok(c + x * x)
+                },
+                Some(20),
+                None,
+                None,
+            )
+            .unwrap();
+
+        let trials = study.trials().unwrap();
+        assert_eq!(
+            trials
+                .iter()
+                .filter(|t| t.state == TrialState::Complete)
+                .count(),
+            20,
+            "a pinned parameter must not fail trials"
+        );
+    }
+
+    #[test]
+    fn test_tpe_log_int_completes_across_ranges() {
+        // End-to-end companion to the Parzen grid-alignment regression: the
+        // sampled integers must be storable, not just on-grid in isolation.
+        use crate::study::create_study;
+        use std::sync::Arc;
+
+        for (low, high) in [(1i64, 100i64), (100, 300)] {
+            let sampler: Arc<dyn Sampler> = Arc::new(TpeSampler::with_defaults(
+                StudyDirection::Minimize,
+                Some(42),
+            ));
+            let study = create_study(
+                None,
+                Some(sampler),
+                None,
+                None,
+                Some(StudyDirection::Minimize),
+                None,
+                false,
+            )
+            .unwrap();
+
+            let target = (low + high) / 2;
+            study
+                .optimize(
+                    |trial| {
+                        let n = trial.suggest_int("n", low, high, true, 1)?;
+                        Ok(((n - target) as f64).abs())
+                    },
+                    Some(40),
+                    None,
+                    None,
+                )
+                .unwrap();
+
+            let failed = study
+                .trials()
+                .unwrap()
+                .into_iter()
+                .filter(|t| t.state == TrialState::Fail)
+                .count();
+            assert_eq!(failed, 0, "log-int [{low}, {high}] failed {failed} trials");
+        }
     }
 }

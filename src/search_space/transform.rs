@@ -206,19 +206,20 @@ fn transform_numerical_int(value: i64, d: &IntDistribution, transform_log: bool)
 }
 
 fn untransform_numerical_float(trans: f64, d: &FloatDistribution, transform_log: bool) -> f64 {
+    // A single-valued distribution has exactly one legal value. Return it
+    // verbatim rather than round-tripping through the transform: for a
+    // log-scale distribution `exp(ln(low))` lands one or two ULP off `low`
+    // and would no longer be contained in the distribution.
+    if d.single() {
+        return d.low;
+    }
     if d.log {
         let v = if transform_log { trans.exp() } else { trans };
-        if d.single() {
-            v
-        } else {
-            // Half-open [low, high): clamp to just below high
-            v.clamp(d.low, f64::next_down(d.high))
-        }
+        // Half-open [low, high): clamp to just below high
+        v.clamp(d.low, f64::next_down(d.high))
     } else if let Some(step) = d.step {
         let v = ((trans - d.low) / step).round() * step + d.low;
         v.clamp(d.low, d.high)
-    } else if d.single() {
-        trans
     } else {
         // Half-open [low, high)
         trans.clamp(d.low, f64::next_down(d.high))
@@ -526,5 +527,27 @@ mod tests {
         // With half_step=0.5 applied before log: ln(0.5) and ln(100.5)
         assert!((bounds[0][0] - 0.5_f64.ln()).abs() < 1e-10);
         assert!((bounds[0][1] - 100.5_f64.ln()).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_single_valued_log_float_untransforms_exactly() {
+        // Regression: `exp(ln(c))` is one or two ULP off `c` for most c, so
+        // round-tripping a pinned log-scale parameter produced a value the
+        // distribution no longer contained.
+        for c in [1e-5, 1e-3, 1e-2, 0.05, 2.0, 128.0, 1000.0] {
+            let d = FloatDistribution::new(c, c, true, None).unwrap();
+            let mut ss = IndexMap::new();
+            ss.insert("lr".to_string(), Distribution::FloatDistribution(d.clone()));
+            let t = SearchSpaceTransform::new(ss, true, false, false);
+
+            let decoded = t.untransform(&[c.ln()]).unwrap();
+            match decoded.get("lr").unwrap() {
+                ParamValue::Float(v) => {
+                    assert_eq!(*v, c, "pinned log float {c} must round-trip exactly");
+                    assert!(d.contains(*v), "{v} must be contained in [{c}, {c}]");
+                }
+                other => panic!("expected a float, got {other:?}"),
+            }
+        }
     }
 }

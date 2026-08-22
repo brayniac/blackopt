@@ -44,6 +44,23 @@ impl FloatDistribution {
                 "step must be finite and > 0, got step={s}"
             )));
         }
+        // Snap `high` down onto the step grid so that every value the
+        // samplers can produce — including the clamp target `high` itself —
+        // satisfies `contains`. Without this, a distribution such as
+        // (low=0, high=1, step=0.3) has an unreachable upper bound that
+        // storage validation would reject.
+        let high = match step {
+            Some(s) => {
+                let k = (high - low) / s;
+                let k = if (k - k.round()).abs() < 1e-8 {
+                    k.round()
+                } else {
+                    k.floor()
+                };
+                low + k * s
+            }
+            None => high,
+        };
         Ok(Self {
             low,
             high,
@@ -169,5 +186,26 @@ mod tests {
     fn test_to_internal_repr_nan() {
         let d = FloatDistribution::new(0.0, 1.0, false, None).unwrap();
         assert!(d.to_internal_repr(f64::NAN).is_err());
+    }
+
+    #[test]
+    fn test_step_snaps_high_onto_grid() {
+        // Regression: `high` must be a value the distribution contains.
+        // Samplers clamp to `high`, and storage rejects anything `contains`
+        // refuses, so an off-grid `high` silently failed trials.
+        let d = FloatDistribution::new(0.0, 1.0, false, Some(0.3)).unwrap();
+        assert!((d.high - 0.9).abs() < 1e-12, "high={}", d.high);
+        assert!(d.contains(d.high));
+
+        // An already-on-grid high is left alone.
+        let d = FloatDistribution::new(0.0, 1.0, false, Some(0.1)).unwrap();
+        assert!((d.high - 1.0).abs() < 1e-12, "high={}", d.high);
+        assert!(d.contains(d.high));
+
+        // A high that lands on the grid only up to float error still snaps
+        // to the grid point rather than a step below it.
+        let d = FloatDistribution::new(0.0, 0.3, false, Some(0.1)).unwrap();
+        assert!((d.high - 0.3).abs() < 1e-12, "high={}", d.high);
+        assert!(d.contains(d.high));
     }
 }

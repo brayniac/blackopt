@@ -173,15 +173,18 @@ pub trait Storage: Send + Sync {
             ));
         }
         let direction = directions[0];
-        // Filter to trials with a readable, finite value so a corrupted trial
-        // degrades to being skipped rather than panicking the study.
+        // Filter to trials with a readable value so a corrupted trial (e.g.
+        // one carrying the wrong number of objectives) degrades to being
+        // skipped rather than panicking the study. NaN is excluded because it
+        // has no ordering; ±inf is kept, since an infinite objective is a
+        // legitimate penalty for an infeasible configuration.
         let valid: Vec<&FrozenTrial> = trials
             .iter()
-            .filter(|t| matches!(t.value(), Ok(Some(v)) if v.is_finite()))
+            .filter(|t| matches!(t.value(), Ok(Some(v)) if !v.is_nan()))
             .collect();
         if valid.is_empty() {
             return Err(Error::ValueError(
-                "no completed trials with a valid value".into(),
+                "no completed trials with a comparable value".into(),
             ));
         }
         let best = valid

@@ -41,6 +41,12 @@ impl Terminator for MaxTrialsTerminator {
 /// "Trials" here means *finished* trials (complete, failed, or pruned): a
 /// run of failures or prunings counts as a run without improvement, so a
 /// sampler that keeps failing will stop the loop instead of spinning forever.
+///
+/// Improvement itself is measured only over *completed* trials. A pruned
+/// trial's recorded value is its last intermediate report — a partial-epoch
+/// score, not an objective value — and letting those compete would both
+/// reset patience on trials that never finished and let an early partial
+/// score mask real progress.
 pub struct NoImprovementTerminator {
     patience: usize,
 }
@@ -81,6 +87,10 @@ impl Terminator for NoImprovementTerminator {
         let mut best_idx = 0;
 
         for (i, trial) in trials.iter().enumerate() {
+            // Only completed trials carry a real objective value.
+            if trial.state != TrialState::Complete {
+                continue;
+            }
             if let Some(values) = &trial.values
                 && !values.is_empty()
             {
@@ -340,6 +350,95 @@ mod tests {
         assert!(
             n <= 11, // allow a tiny overshoot since check is after trial
             "expected ~10 trials with MaxTrialsTerminator, got {n}"
+        );
+    }
+
+    #[test]
+    fn test_no_improvement_terminator_ignores_pruned_intermediate_values() {
+        // A pruned trial's recorded value is its last intermediate report, not
+        // an objective value. Letting those compete broke the terminator in
+        // both directions; this pins the "never stops" direction.
+        let term = NoImprovementTerminator::new(3);
+        let sampler: Arc<dyn crate::samplers::Sampler> = Arc::new(RandomSampler::new(Some(42)));
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            Some(StudyDirection::Minimize),
+            None,
+            false,
+        )
+        .unwrap();
+
+        // Every completed trial scores exactly 100.0 — zero real improvement —
+        // while pruned trials report an ever-better partial score.
+        let i = std::sync::atomic::AtomicUsize::new(0);
+        study
+            .optimize(
+                |trial| {
+                    let _x = trial.suggest_float("x", 0.0, 1.0, false, None)?;
+                    let n = i.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if n % 2 == 1 {
+                        trial.report(1.0 / (n as f64 + 1.0), 0)?;
+                        Err(crate::error::Error::TrialPruned)
+                    } else {
+                        Ok(100.0)
+                    }
+                },
+                Some(40),
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert!(
+            term.should_terminate(&study),
+            "improving partial scores must not reset patience"
+        );
+    }
+
+    #[test]
+    fn test_no_improvement_terminator_not_masked_by_early_prune() {
+        // The other direction: an early pruned trial reporting a very good
+        // partial score must not look like a best-so-far that never improves.
+        let sampler: Arc<dyn crate::samplers::Sampler> = Arc::new(RandomSampler::new(Some(42)));
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            Some(StudyDirection::Minimize),
+            None,
+            false,
+        )
+        .unwrap();
+
+        let i = std::sync::atomic::AtomicUsize::new(0);
+        let terminators: Vec<Arc<dyn Terminator>> = vec![Arc::new(NoImprovementTerminator::new(3))];
+        study
+            .optimize_with_terminators(
+                |trial| {
+                    let _x = trial.suggest_float("x", 0.0, 1.0, false, None)?;
+                    let n = i.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if n == 0 {
+                        trial.report(0.0, 0)?;
+                        Err(crate::error::Error::TrialPruned)
+                    } else {
+                        Ok(100.0 - n as f64)
+                    }
+                },
+                Some(30),
+                None,
+                None,
+                Some(&terminators),
+            )
+            .unwrap();
+
+        assert_eq!(
+            study.trials().unwrap().len(),
+            30,
+            "steadily improving completed trials must keep the study running"
         );
     }
 }

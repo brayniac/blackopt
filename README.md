@@ -65,6 +65,17 @@ study.enqueue_trial(params, None)?;
 // The next `ask`/`optimize` step runs this exact setting first.
 ```
 
+Enqueued values are checked against the distribution the objective declares
+when it suggests the parameter, so a value outside those bounds — or a
+non-integer for an integer parameter — fails the trial rather than being
+quietly adjusted. A name the objective never suggests fails the trial too:
+the configuration you asked for was not the one that ran.
+
+Because the point is already chosen, the sampler is not consulted for an
+enqueued trial. With `GridSampler` that means an enqueued trial does not
+consume a grid point, and a grid trial's parameters must all come from the
+grid — enqueue every parameter, or none.
+
 ## Multi-Objective Optimization
 
 ```rust
@@ -98,7 +109,7 @@ println!("Pareto front size: {}", pareto_front.len());
 |---------|----------|-----------|
 | `RandomSampler` | Baseline, no assumptions about the objective | |
 | `TpeSampler` | General-purpose Bayesian optimization (univariate by default; multivariate optional) | Bergstra et al. (2011) |
-| `GridSampler` | Exhaustive search over discrete parameters (new trials fail once the grid is exhausted) | |
+| `GridSampler` | Exhaustive search over discrete parameters; each point is attempted once, and new trials fail once the grid is exhausted | |
 | `QmcSampler` | Low-discrepancy sampling (Halton sequences) | Halton (1964) |
 | `CmaEsSampler` | Continuous optimization with covariance adaptation | Hansen & Ostermeier (2001) |
 | `MorboSampler` | Multi-objective Bayesian optimization with trust regions (requires exactly 2 objectives) | Daulton et al. (2022) |

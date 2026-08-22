@@ -54,6 +54,13 @@ enum ParamKernels {
         sigmas: Vec<f64>, // kernel widths, len = n_kernels
         low: f64,
         high: f64,
+        /// The distribution's true bounds, in linear space, before the
+        /// ±step/2 extension and the log transform. Kept verbatim because
+        /// reconstructing them from `low`/`high` is not exact in f64:
+        /// `exp(ln(x))` differs from `x` by an ULP or two, and that residue
+        /// rides into every rounded sample.
+        orig_low: f64,
+        orig_high: f64,
         log: bool,
         step: Option<f64>, // if Some, discrete rounding
     },
@@ -160,6 +167,10 @@ impl ParzenEstimator {
         search_space: &IndexMap<String, Distribution>,
         params: &ParzenEstimatorParameters,
     ) -> ParamKernels {
+        // The true bounds, before any extension or transform.
+        let orig_low = low;
+        let orig_high = high;
+
         // Extend bounds for discrete distributions.
         if let Some(s) = step {
             low -= s / 2.0;
@@ -208,6 +219,8 @@ impl ParzenEstimator {
             sigmas: clipped_sigmas,
             low,
             high,
+            orig_low,
+            orig_high,
             log,
             step,
         }
@@ -334,6 +347,8 @@ impl ParzenEstimator {
                     sigmas,
                     low,
                     high,
+                    orig_low,
+                    orig_high,
                     log,
                     step,
                 } => {
@@ -358,24 +373,12 @@ impl ParzenEstimator {
                         }
                     }
 
-                    // Round discrete.
+                    // Round discrete onto the grid anchored at the true
+                    // lower bound (carried verbatim, not reconstructed).
                     if let Some(st) = step {
-                        // Recover the original bounds: the ±st/2 extension was
-                        // applied in linear space *before* the log transform,
-                        // so undo the log first, then add the half-step back.
-                        let orig_low = if *log {
-                            low.exp() + st / 2.0
-                        } else {
-                            low + st / 2.0
-                        };
-                        let orig_high = if *log {
-                            high.exp() - st / 2.0
-                        } else {
-                            high - st / 2.0
-                        };
                         for s in &mut samples {
                             *s = ((*s - orig_low) / st).round() * st + orig_low;
-                            *s = s.clamp(orig_low, orig_high);
+                            *s = s.clamp(*orig_low, *orig_high);
                         }
                     }
 
@@ -433,6 +436,7 @@ impl ParzenEstimator {
                     high,
                     log,
                     step,
+                    ..
                 } => {
                     for (si, &x) in xs.iter().enumerate() {
                         for k in 0..n_kernels {
@@ -724,6 +728,43 @@ mod tests {
                 (1..=100).contains(&iv),
                 "log-int sample {iv} out of [1, 100]"
             );
+        }
+    }
+
+    #[test]
+    fn test_parzen_estimator_log_int_grid_survives_float_error() {
+        // Regression: reconstructing the original bounds as `low.exp()` is
+        // exact in the reals but not in f64 — `exp(ln(99.5)) + 0.5` is
+        // 99.99999999999997, and that residue was added back into every
+        // rounded sample, pushing it off the integer grid entirely.
+        // `(1, 100)` happens to round-trip exactly, so it cannot catch this;
+        // `(100, 300)` can.
+        for (low, high) in [(1i64, 100i64), (100, 300), (50, 500), (7, 999)] {
+            let mut ss = IndexMap::new();
+            ss.insert(
+                "n".to_string(),
+                Distribution::IntDistribution(IntDistribution::new(low, high, true, 1).unwrap()),
+            );
+
+            let mid = (low + high) / 2;
+            let mut obs = HashMap::new();
+            obs.insert(
+                "n".to_string(),
+                vec![low as f64, mid as f64, high as f64, (mid / 2) as f64],
+            );
+
+            let pe = ParzenEstimator::new(&obs, &ss, &ParzenEstimatorParameters::default(), None);
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+            for &v in &pe.sample(&mut rng, 200)["n"] {
+                assert!(
+                    (v - v.round()).abs() < 1e-9,
+                    "log-int sample {v} for [{low}, {high}] is not an integer"
+                );
+                assert!(
+                    (low..=high).contains(&(v as i64)),
+                    "log-int sample {v} out of [{low}, {high}]"
+                );
+            }
         }
     }
 }

@@ -60,11 +60,21 @@ impl Distribution {
             (Self::FloatDistribution(d), ParamValue::Float(v)) => d.to_internal_repr(*v),
             (Self::FloatDistribution(d), ParamValue::Int(v)) => d.to_internal_repr(*v as f64),
             (Self::IntDistribution(d), ParamValue::Int(v)) => d.to_internal_repr(*v),
-            (Self::IntDistribution(d), ParamValue::Float(v)) => d.to_internal_repr(*v as i64),
+            (Self::IntDistribution(d), ParamValue::Float(v)) => {
+                // Accept a float that names an integer exactly, but never
+                // truncate: silently turning a requested 2.7 into 2 evaluates
+                // a different configuration than the caller asked for.
+                if v.fract() != 0.0 {
+                    return Err(Error::ValueError(format!(
+                        "value {v} is not an integer, but the parameter is an integer parameter"
+                    )));
+                }
+                d.to_internal_repr(*v as i64)
+            }
             (Self::CategoricalDistribution(d), ParamValue::Categorical(v)) => d.to_internal_repr(v),
-            _ => Err(Error::ValueError(
-                "parameter value type mismatch for distribution".to_string(),
-            )),
+            _ => Err(Error::ValueError(format!(
+                "parameter value {value:?} does not match distribution {self:?}"
+            ))),
         }
     }
 
@@ -215,5 +225,19 @@ mod tests {
             let parsed: CategoricalChoice = serde_json::from_str(&json).unwrap();
             assert_eq!(parsed, val, "{val:?} must round-trip");
         }
+    }
+
+    #[test]
+    fn test_int_distribution_rejects_non_integral_float() {
+        // Regression: an enqueued Float(2.7) for an integer parameter used to
+        // be truncated to 2, silently evaluating a different configuration
+        // than the caller asked for.
+        let dist = Distribution::IntDistribution(IntDistribution::new(0, 10, false, 1).unwrap());
+        assert!(
+            dist.to_internal_repr(&ParamValue::Float(2.7)).is_err(),
+            "2.7 must not be accepted as an integer"
+        );
+        // A float that names an integer exactly is still fine.
+        assert_eq!(dist.to_internal_repr(&ParamValue::Float(3.0)).unwrap(), 3.0);
     }
 }
