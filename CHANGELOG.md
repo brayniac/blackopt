@@ -138,6 +138,11 @@ Everything since the initial commit. No version has been tagged yet.
 - GitHub Actions CI: rustfmt, clippy (warnings denied), tests on Linux and
   macOS, a build against the declared MSRV, rustdoc with warnings denied, and
   `cargo package`.
+- Property-based tests (`proptest`) covering invariants that hold across all
+  distributions: a distribution's own bounds must be values it contains, and
+  anything a sampler proposes must be storable. Several of the bugs fixed above
+  were found by hand one constant at a time — `(1e6, 1e6 + 1, step 1e-6)`,
+  `suggest_int("n", 100, 300, log = true)` — which is not how anyone guesses.
 - A weekly scheduled workflow builds against the `beta` and `nightly`
   toolchains and against freshly resolved dependencies, so breakage that lands
   without anyone touching this repo shows up with lead time rather than in
