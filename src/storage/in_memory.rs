@@ -235,19 +235,43 @@ impl Storage for InMemoryStorage {
         // Get study and compute trial number
         let study = Self::get_study(&inner, study_id)?;
         let trial_number = study.trials.len() as i64;
-
-        inner.max_trial_id += 1;
-        let trial_id = inner.max_trial_id;
+        let n_directions = study.directions.len();
 
         let trial = if let Some(template) = template_trial {
             let mut t = template.clone();
-            t.trial_id = trial_id;
             t.number = trial_number;
+            // Timestamps are bookkeeping the caller should not have to supply
+            // by hand; fill in what the state requires before validating, so
+            // that seeding a study with prior results still works.
+            if t.state != TrialState::Waiting && t.datetime_start.is_none() {
+                t.datetime_start = Some(Utc::now());
+            }
+            if t.state.is_finished() && t.datetime_complete.is_none() {
+                t.datetime_complete = Some(Utc::now());
+            }
             // Reject templates that violate trial invariants instead of
             // silently persisting corrupted state.
             t.validate()?;
+            // `validate` has no study context, so the objective count has to
+            // be checked here — matching `set_trial_state_values`. Without it
+            // an imported trial's `value()` would fail for the rest of the
+            // study's life.
+            if t.state == TrialState::Complete
+                && let Some(values) = &t.values
+                && values.len() != n_directions
+            {
+                return Err(Error::ValueError(format!(
+                    "template trial has {} values but the study has {n_directions} objectives",
+                    values.len()
+                )));
+            }
+            // Only claim a trial id once the template is known to be good.
+            inner.max_trial_id += 1;
+            t.trial_id = inner.max_trial_id;
             t
         } else {
+            inner.max_trial_id += 1;
+            let trial_id = inner.max_trial_id;
             // Create a fresh RUNNING trial
             FrozenTrial {
                 number: trial_number,
@@ -264,6 +288,7 @@ impl Storage for InMemoryStorage {
             }
         };
 
+        let trial_id = trial.trial_id;
         inner
             .trial_id_to_study_id_and_number
             .insert(trial_id, (study_id, trial_number));
@@ -970,5 +995,78 @@ mod tests {
         template.values = Some(vec![1.0]);
         template.params.insert("x".into(), ParamValue::Float(0.5));
         assert!(storage.create_new_trial(sid, Some(&template)).is_err());
+    }
+
+    fn complete_template(values: Vec<f64>) -> FrozenTrial {
+        FrozenTrial {
+            number: 0,
+            state: TrialState::Complete,
+            values: Some(values),
+            datetime_start: Some(Utc::now()),
+            datetime_complete: Some(Utc::now()),
+            params: HashMap::new(),
+            distributions: HashMap::new(),
+            user_attrs: HashMap::new(),
+            system_attrs: HashMap::new(),
+            intermediate_values: HashMap::new(),
+            trial_id: 0,
+        }
+    }
+
+    #[test]
+    fn test_create_new_trial_fills_missing_timestamps() {
+        // Regression: template validation started rejecting hand-built
+        // templates that omit timestamps, which broke seeding a study with
+        // prior results. Timestamps are bookkeeping, not caller input.
+        let storage = InMemoryStorage::new();
+        let sid = storage
+            .create_new_study(&[StudyDirection::Minimize], None)
+            .unwrap();
+
+        let mut template = complete_template(vec![1.0]);
+        template.datetime_start = None;
+        template.datetime_complete = None;
+
+        let tid = storage.create_new_trial(sid, Some(&template)).unwrap();
+        let stored = storage.get_trial(tid).unwrap();
+        assert!(stored.datetime_start.is_some());
+        assert!(stored.datetime_complete.is_some());
+    }
+
+    #[test]
+    fn test_create_new_trial_checks_objective_count() {
+        // Regression: `validate` has no study context, so a template with the
+        // wrong number of objectives was accepted and its `value()` failed
+        // for the rest of the study's life.
+        let storage = InMemoryStorage::new();
+        let sid = storage
+            .create_new_study(&[StudyDirection::Minimize], None)
+            .unwrap();
+
+        assert!(
+            storage
+                .create_new_trial(sid, Some(&complete_template(vec![1.0, 2.0])))
+                .is_err()
+        );
+        assert!(
+            storage
+                .create_new_trial(sid, Some(&complete_template(vec![1.0])))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_rejected_template_does_not_burn_a_trial_id() {
+        let storage = InMemoryStorage::new();
+        let sid = storage
+            .create_new_study(&[StudyDirection::Minimize], None)
+            .unwrap();
+
+        let _ = storage.create_new_trial(sid, Some(&complete_template(vec![1.0, 2.0])));
+        let tid = storage.create_new_trial(sid, None).unwrap();
+        assert_eq!(
+            tid, 0,
+            "a rejected template must not consume a trial id (ids start at 0)"
+        );
     }
 }

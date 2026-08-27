@@ -518,13 +518,12 @@ impl Study {
                 }
             }
             Err(Error::TrialPruned) => {
-                let frozen = self.storage.get_trial(trial_id)?;
-                let last_value = frozen
-                    .last_step()
-                    .and_then(|step| frozen.intermediate_values.get(&step))
-                    .copied()
-                    .filter(|v| v.is_finite());
-                (TrialState::Pruned, last_value.map(|v| vec![v]))
+                // A single intermediate value cannot stand in for a vector of
+                // objectives; storing one produced a trial whose value arity
+                // disagreed with the study's, which then tripped up anything
+                // comparing objective vectors. The intermediate values are
+                // already recorded on the trial.
+                (TrialState::Pruned, None)
             }
             Err(e) => {
                 // Record why the trial failed so it is not silently lost.
@@ -1379,6 +1378,45 @@ mod tests {
                 failed.len(),
                 failed[0].system_attrs.get("failure_reason")
             );
+        }
+    }
+
+    #[test]
+    fn test_multi_objective_pruned_trial_stores_no_values() {
+        // Regression: a pruned multi-objective trial stored a single
+        // intermediate value, producing a trial whose value arity disagreed
+        // with the study's — which then tripped up objective-vector
+        // comparisons on public API.
+        let sampler: Arc<dyn Sampler> = Arc::new(crate::samplers::RandomSampler::new(Some(42)));
+        let study = create_study(
+            None,
+            Some(sampler),
+            None,
+            None,
+            None,
+            Some(vec![StudyDirection::Minimize, StudyDirection::Minimize]),
+            false,
+        )
+        .unwrap();
+
+        study
+            .optimize_multi(
+                |trial| {
+                    let _x = trial.suggest_float("x", 0.0, 1.0, false, None)?;
+                    trial.report(0.5, 0)?;
+                    Err(Error::TrialPruned)
+                },
+                Some(2),
+                None,
+                None,
+            )
+            .unwrap();
+
+        for t in study.trials().unwrap() {
+            assert_eq!(t.state, TrialState::Pruned);
+            assert_eq!(t.values, None, "a pruned MO trial must carry no values");
+            // The intermediate report is still there.
+            assert_eq!(t.intermediate_values.get(&0), Some(&0.5));
         }
     }
 }
