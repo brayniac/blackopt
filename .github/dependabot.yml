@@ -1,0 +1,49 @@
+version: 2
+
+updates:
+  # The workflows pin actions by major tag (@v4, @v2), which floats within a
+  # major but never crosses one. Nothing else in this repo would ever propose
+  # that bump.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    commit-message:
+      prefix: ci
+      include: scope
+    labels:
+      - dependencies
+      - ci
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # The scheduled `fresh-deps` job says when a new dependency release *breaks*
+  # us; it never proposes the bump. This closes that loop, and because
+  # Cargo.lock is committed these PRs move the lock the required checks
+  # actually use.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    commit-message:
+      prefix: build
+      include: scope
+    labels:
+      - dependencies
+    open-pull-requests-limit: 5
+    groups:
+      # Routine bumps arrive as one PR rather than five. Majors are left
+      # ungrouped on purpose: `rand 0.8 -> 0.9` is an API decision, not
+      # housekeeping, and deserves its own PR and its own CI run.
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

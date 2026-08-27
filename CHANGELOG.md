@@ -138,6 +138,9 @@ Everything since the initial commit. No version has been tagged yet.
 - GitHub Actions CI: rustfmt, clippy (warnings denied), tests on Linux and
   macOS, a build against the declared MSRV, rustdoc with warnings denied, and
   `cargo package`.
+- Dependabot keeps the pinned GitHub Actions and the Cargo dependencies
+  current. Minor and patch bumps arrive grouped as a single PR; major bumps
+  stay separate, since those are API decisions rather than housekeeping.
 - Property-based tests (`proptest`) covering invariants that hold across all
   distributions: a distribution's own bounds must be values it contains, and
   anything a sampler proposes must be storable. Several of the bugs fixed above
