@@ -5,12 +5,22 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-While the crate is below `0.1.0`, breaking changes may land in any release; they
-are always listed under **Breaking** so downstream users can see what moved.
+While the crate is below `1.0.0`, a breaking change bumps the minor version.
+Breaking changes are always listed under **Breaking** so downstream users can
+see what moved.
 
 ## [Unreleased]
 
-Everything since the initial commit. No version has been tagged yet.
+## [0.1.0] - 2026-08-27
+
+The motivation for this release was bug fixes, but the contract moved: fixing
+them required changing a widely-implemented trait signature, a serialized
+format, and several behaviors. Hence a minor bump rather than a patch.
+
+Two of the fixes are worth reading first, because on `0.0.1` they meant the
+library silently did not do what it said: the default TPE sampler performed no
+TPE at all (it returned random samples for every parameter), and `GridSampler`
+was entirely unwired (every trial failed while `optimize` returned `Ok`).
 
 ### Breaking
 
@@ -161,3 +171,6 @@ Everything since the initial commit. No version has been tagged yet.
   approximation, not a true functional ANOVA decomposition.
 - README documents the `MorboSampler` two-objective requirement, grid
   exhaustion behavior, and enqueueing.
+
+[Unreleased]: https://github.com/brayniac/blackopt/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/brayniac/blackopt/releases/tag/v0.1.0
