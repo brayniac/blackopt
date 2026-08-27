@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 56cdc6cef02b61097306c717123041c4e6c21d2b0776203948ce1ee33804a96d # shrinks to d = FloatDistribution { low: 0.0, high: 1e-6, log: false, step: Some(5.399737980296955) }
+cc cde65e98246a9efec7b413efa0321563dfd310d48b328816b82818f8572d6b47 # shrinks to d = FloatDistribution { low: 0.0, high: 962.1904043545192, log: false, step: Some(6.7102025050070235) }, seed = 1346959796772737048
+cc f9b46f737b8fa0c6ef575d417d605327292636d696866fa0f755012617134377 # shrinks to fd = FloatDistribution { low: 0.0, high: 4.87916157448284, log: false, step: Some(6.4588422036067845) }, id = IntDistribution { low: 0, high: 0, log: false, step: 1 }
