@@ -138,6 +138,10 @@ Everything since the initial commit. No version has been tagged yet.
 - GitHub Actions CI: rustfmt, clippy (warnings denied), tests on Linux and
   macOS, a build against the declared MSRV, rustdoc with warnings denied, and
   `cargo package`.
+- A weekly scheduled workflow builds against the `beta` and `nightly`
+  toolchains and against freshly resolved dependencies, so breakage that lands
+  without anyone touching this repo shows up with lead time rather than in
+  whichever PR happens to be next. It opens a single rolling issue on failure.
 - `Cargo.lock` is now committed. Consumers of a library ignore it, but CI needs
   it: without a lock file every run resolves dependencies afresh, so a
   dependency that raises its own minimum Rust version would fail the MSRV job

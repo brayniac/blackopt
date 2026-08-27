@@ -1,0 +1,107 @@
+name: Scheduled
+
+# Early warning for breakage that lands without anyone touching this repo.
+#
+# Deliberately not a `stable` run: CI already covers stable on every push, and
+# a scheduled stable run would find a new release at the same moment the next
+# PR would. The lead time is in `beta` (~6 weeks ahead of stable) and in
+# dependency versions, which CI never sees now that Cargo.lock is committed.
+on:
+  schedule:
+    # Mondays, 06:00 UTC. Beta moves every six weeks, so weekly is ample.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  beta:
+    name: beta toolchain
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@beta
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-targets --locked
+      - run: cargo test --doc --locked
+      - run: cargo clippy --all-targets --locked -- -D warnings
+
+  nightly:
+    name: nightly toolchain
+    runs-on: ubuntu-latest
+    # Informational only. Warnings are *not* denied here: nightly adds and
+    # changes lints constantly, and denying them would make this job a
+    # permanent red light that everyone learns to ignore. A failure here means
+    # something actually broke, not that a lint was renamed.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-targets --locked
+      - run: cargo test --doc --locked
+
+  fresh-deps:
+    name: latest dependencies
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Committing Cargo.lock made CI reproducible at the cost of never seeing
+      # a new dependency release. This job buys that back, without giving up
+      # the reproducibility the required checks depend on.
+      - run: cargo update
+      - run: cargo test --all-targets
+      - run: cargo test --doc
+
+  report:
+    name: report failure
+    # Only the two actionable jobs. `nightly` is left out on purpose: it shows
+    # red in the Actions tab when it breaks, but does not open issues.
+    needs: [beta, fresh-deps]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create scheduled-failure \
+            --repo "$REPO" \
+            --color B60205 \
+            --description "A scheduled CI run failed" \
+            --force
+          # One rolling issue rather than a new one every week.
+          existing="$(gh issue list --repo "$REPO" \
+            --label scheduled-failure --state open \
+            --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" \
+              --body "Another scheduled run failed: $RUN_URL"
+          else
+            gh issue create --repo "$REPO" \
+              --label scheduled-failure \
+              --title "Scheduled CI failure" \
+              --body "$(printf '%s\n' \
+                "A scheduled run failed against a future toolchain or newer dependencies." \
+                "" \
+                "Run: $RUN_URL" \
+                "" \
+                "This does not affect the required checks on \`main\`, which pin stable and a committed lock file." \
+                "Closing this issue resets the alert; the next failure opens a fresh one.")"
+          fi
