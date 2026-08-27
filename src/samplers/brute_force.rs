@@ -95,14 +95,15 @@ impl BruteForceSampler {
 impl Sampler for BruteForceSampler {
     fn sample_independent(
         &self,
+        trials: &[FrozenTrial],
         trial: &FrozenTrial,
         param_name: &str,
         distribution: &Distribution,
     ) -> Result<f64> {
-        // For brute force, we try to pick an unvisited value
-        // In independent mode, just delegate to random
+        // Independent mode happens only when the parameter is not part of the
+        // (jointly enumerated) intersection search space; fall back to random.
         self.random_sampler
-            .sample_independent(trial, param_name, distribution)
+            .sample_independent(trials, trial, param_name, distribution)
     }
 
     fn infer_relative_search_space(&self, trials: &[FrozenTrial]) -> HashMap<String, Distribution> {

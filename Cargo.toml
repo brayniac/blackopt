@@ -2,7 +2,7 @@
 name = "blackopt"
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.86"
 license = "MIT OR Apache-2.0"
 description = "Black-box optimization with TPE, CMA-ES, MORBO, NSGA-II/III, and more"
 repository = "https://github.com/brayniac/blackopt"

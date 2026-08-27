@@ -485,7 +485,9 @@ impl Sampler for CmaEsSampler {
             }
 
             let mean = if best_params.len() == ordered_space.len() {
-                transform.transform(&best_params)
+                transform
+                    .transform(&best_params)
+                    .unwrap_or_else(|_| vec![0.5; n_dims])
             } else {
                 vec![0.5; n_dims]
             };
@@ -514,12 +516,13 @@ impl Sampler for CmaEsSampler {
 
     fn sample_independent(
         &self,
+        trials: &[FrozenTrial],
         trial: &FrozenTrial,
         param_name: &str,
         distribution: &Distribution,
     ) -> Result<f64> {
         self.independent_sampler
-            .sample_independent(trial, param_name, distribution)
+            .sample_independent(trials, trial, param_name, distribution)
     }
 
     fn after_trial(
@@ -564,8 +567,9 @@ impl Sampler for CmaEsSampler {
                 }
             }
 
-            if trial_params.len() == param_names.len() {
-                let encoded = transform.transform(&trial_params);
+            if trial_params.len() == param_names.len()
+                && let Ok(encoded) = transform.transform(&trial_params)
+            {
                 let value = if self.direction == StudyDirection::Maximize {
                     -values[0]
                 } else {

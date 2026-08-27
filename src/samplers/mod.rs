@@ -51,8 +51,13 @@ pub trait Sampler: Send + Sync {
     }
 
     /// Sample a single parameter independently.
+    ///
+    /// `trials` is the study's full trial history (including the current
+    /// running trial), `trial` is the current trial. Samplers that need
+    /// history (e.g. univariate TPE) use `trials`.
     fn sample_independent(
         &self,
+        trials: &[FrozenTrial],
         trial: &FrozenTrial,
         param_name: &str,
         distribution: &Distribution,
@@ -60,6 +65,22 @@ pub trait Sampler: Send + Sync {
 
     /// Called before a trial starts (optional hook).
     fn before_trial(&self, _trials: &[FrozenTrial]) {}
+
+    /// Called right after a new trial has been created and started, before
+    /// any parameters are sampled or suggested.
+    ///
+    /// `trials` is the study's trial history, including the newly created
+    /// trial. Implementations may annotate the new trial through storage
+    /// (e.g. `GridSampler` records which grid point this trial will
+    /// evaluate); returning an error aborts the trial.
+    ///
+    /// Not called for trials whose parameters were pre-specified through
+    /// [`Study::enqueue_trial`](crate::study::Study::enqueue_trial): the
+    /// sampler does not choose those points, so it must not reserve
+    /// resources for them.
+    fn trial_created(&self, _trials: &[FrozenTrial], _trial: &crate::trial::Trial) -> Result<()> {
+        Ok(())
+    }
 
     /// Called after a trial finishes (optional hook).
     fn after_trial(

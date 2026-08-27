@@ -13,8 +13,13 @@ use crate::error::{Error, Result};
 /// A parameter value as stored in `FrozenTrial::params`.
 ///
 /// This represents the external (user-facing) value of a parameter.
+///
+/// Serialized adjacently-tagged (e.g. `{"type": "Int", "value": 5}`,
+/// `{"type": "Float", "value": 0.5}`) so that each variant survives a JSON
+/// round-trip without losing its type — an untagged `Int(5)` would come back
+/// as `Float(5.0)`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
+#[serde(tag = "type", content = "value")]
 pub enum ParamValue {
     Float(f64),
     Int(i64),
@@ -55,11 +60,21 @@ impl Distribution {
             (Self::FloatDistribution(d), ParamValue::Float(v)) => d.to_internal_repr(*v),
             (Self::FloatDistribution(d), ParamValue::Int(v)) => d.to_internal_repr(*v as f64),
             (Self::IntDistribution(d), ParamValue::Int(v)) => d.to_internal_repr(*v),
-            (Self::IntDistribution(d), ParamValue::Float(v)) => d.to_internal_repr(*v as i64),
+            (Self::IntDistribution(d), ParamValue::Float(v)) => {
+                // Accept a float that names an integer exactly, but never
+                // truncate: silently turning a requested 2.7 into 2 evaluates
+                // a different configuration than the caller asked for.
+                if v.fract() != 0.0 {
+                    return Err(Error::ValueError(format!(
+                        "value {v} is not an integer, but the parameter is an integer parameter"
+                    )));
+                }
+                d.to_internal_repr(*v as i64)
+            }
             (Self::CategoricalDistribution(d), ParamValue::Categorical(v)) => d.to_internal_repr(v),
-            _ => Err(Error::ValueError(
-                "parameter value type mismatch for distribution".to_string(),
-            )),
+            _ => Err(Error::ValueError(format!(
+                "parameter value {value:?} does not match distribution {self:?}"
+            ))),
         }
     }
 
@@ -172,5 +187,57 @@ mod tests {
             Distribution::FloatDistribution(FloatDistribution::new(0.0, 1.0, false, None).unwrap());
         let val = ParamValue::Categorical(CategoricalChoice::Str("oops".into()));
         assert!(dist.to_internal_repr(&val).is_err());
+    }
+
+    #[test]
+    fn test_param_value_serde_preserves_type() {
+        // Regression: Int must not come back as Float after a JSON round-trip.
+        let int_val = ParamValue::Int(5);
+        let json = serde_json::to_string(&int_val).unwrap();
+        let parsed: ParamValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, ParamValue::Int(5), "Int must round-trip as Int");
+
+        let float_val = ParamValue::Float(0.5);
+        let json = serde_json::to_string(&float_val).unwrap();
+        let parsed: ParamValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, ParamValue::Float(0.5));
+
+        let cat_val = ParamValue::Categorical(CategoricalChoice::Str("a".into()));
+        let json = serde_json::to_string(&cat_val).unwrap();
+        let parsed: ParamValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed,
+            ParamValue::Categorical(CategoricalChoice::Str("a".into()))
+        );
+    }
+
+    #[test]
+    fn test_categorical_choice_serde_preserves_type() {
+        // Int(5) and Float(5.0) are distinct choices and must stay distinct.
+        for val in [
+            CategoricalChoice::None,
+            CategoricalChoice::Bool(true),
+            CategoricalChoice::Int(5),
+            CategoricalChoice::Float(5.0),
+            CategoricalChoice::Str("a".into()),
+        ] {
+            let json = serde_json::to_string(&val).unwrap();
+            let parsed: CategoricalChoice = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, val, "{val:?} must round-trip");
+        }
+    }
+
+    #[test]
+    fn test_int_distribution_rejects_non_integral_float() {
+        // Regression: an enqueued Float(2.7) for an integer parameter used to
+        // be truncated to 2, silently evaluating a different configuration
+        // than the caller asked for.
+        let dist = Distribution::IntDistribution(IntDistribution::new(0, 10, false, 1).unwrap());
+        assert!(
+            dist.to_internal_repr(&ParamValue::Float(2.7)).is_err(),
+            "2.7 must not be accepted as an integer"
+        );
+        // A float that names an integer exactly is still fine.
+        assert_eq!(dist.to_internal_repr(&ParamValue::Float(3.0)).unwrap(), 3.0);
     }
 }

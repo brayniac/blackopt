@@ -142,12 +142,13 @@ impl Sampler for QmcSampler {
 
     fn sample_independent(
         &self,
+        trials: &[FrozenTrial],
         trial: &FrozenTrial,
         param_name: &str,
         distribution: &Distribution,
     ) -> Result<f64> {
         self.independent_sampler
-            .sample_independent(trial, param_name, distribution)
+            .sample_independent(trials, trial, param_name, distribution)
     }
 }
 

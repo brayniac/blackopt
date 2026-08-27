@@ -173,20 +173,36 @@ pub trait Storage: Send + Sync {
             ));
         }
         let direction = directions[0];
-        let best = trials
+        // Filter to trials with a readable value so a corrupted trial (e.g.
+        // one carrying the wrong number of objectives) degrades to being
+        // skipped rather than panicking the study. NaN is excluded because it
+        // has no ordering; ±inf is kept, since an infinite objective is a
+        // legitimate penalty for an infeasible configuration.
+        let valid: Vec<&FrozenTrial> = trials
+            .iter()
+            .filter(|t| matches!(t.value(), Ok(Some(v)) if !v.is_nan()))
+            .collect();
+        if valid.is_empty() {
+            return Err(Error::ValueError(
+                "no completed trials with a comparable value".into(),
+            ));
+        }
+        let best = valid
             .into_iter()
             .min_by(|a, b| {
-                let va = a.value().unwrap().unwrap();
-                let vb = b.value().unwrap().unwrap();
+                let va = a.value().ok().flatten().unwrap_or(f64::NAN);
+                let vb = b.value().ok().flatten().unwrap_or(f64::NAN);
                 match direction {
                     StudyDirection::Minimize | StudyDirection::NotSet => {
-                        va.partial_cmp(&vb).unwrap()
+                        va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal)
                     }
-                    StudyDirection::Maximize => vb.partial_cmp(&va).unwrap(),
+                    StudyDirection::Maximize => {
+                        vb.partial_cmp(&va).unwrap_or(std::cmp::Ordering::Equal)
+                    }
                 }
             })
-            .unwrap();
-        Ok(best)
+            .expect("valid is non-empty");
+        Ok(best.clone())
     }
 
     /// Check if a trial is still updatable (not finished).
@@ -200,7 +216,4 @@ pub trait Storage: Send + Sync {
         }
         Ok(())
     }
-
-    /// No-op session cleanup hook.
-    fn remove_session(&self) {}
 }

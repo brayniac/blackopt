@@ -41,6 +41,10 @@ impl IntDistribution {
                 "step must be > 0, got step={step}"
             )));
         }
+        // Snap `high` down onto the step grid so the upper bound is a value
+        // the distribution actually contains — samplers clamp to `high`, and
+        // storage validation rejects anything `contains` refuses.
+        let high = low + ((high - low) / step) * step;
         Ok(Self {
             low,
             high,
@@ -143,5 +147,23 @@ mod tests {
     fn test_to_external_repr() {
         let d = IntDistribution::new(0, 10, false, 1).unwrap();
         assert_eq!(d.to_external_repr(5.0), 5);
+    }
+
+    #[test]
+    fn test_step_snaps_high_onto_grid() {
+        // Regression: an off-grid `high` is unreachable but is exactly what
+        // samplers clamp to, so it silently failed trials.
+        let d = IntDistribution::new(0, 10, false, 3).unwrap();
+        assert_eq!(d.high, 9);
+        assert!(d.contains(d.high as f64));
+
+        let d = IntDistribution::new(1, 10, false, 2).unwrap();
+        assert_eq!(d.high, 9);
+        assert!(d.contains(d.high as f64));
+
+        // Already on-grid: untouched.
+        let d = IntDistribution::new(0, 10, false, 2).unwrap();
+        assert_eq!(d.high, 10);
+        assert!(d.contains(d.high as f64));
     }
 }

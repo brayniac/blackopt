@@ -18,7 +18,6 @@ struct StudyInfo {
     param_distribution: HashMap<String, Distribution>,
     user_attrs: HashMap<String, serde_json::Value>,
     system_attrs: HashMap<String, serde_json::Value>,
-    best_trial_id: Option<i64>,
 }
 
 /// The mutable inner state behind the lock.
@@ -100,46 +99,6 @@ impl InMemoryStorage {
         }
         Ok(())
     }
-
-    /// Update the best_trial_id cache for single-objective studies.
-    fn update_cache(study: &mut StudyInfo, trial_id: i64) {
-        // Only cache for single-objective COMPLETE trials
-        if study.directions.len() != 1 {
-            return;
-        }
-        let trial_number = study.trials.iter().position(|t| t.trial_id == trial_id);
-        let trial_number = match trial_number {
-            Some(n) => n,
-            None => return,
-        };
-        let trial = &study.trials[trial_number];
-        if trial.state != TrialState::Complete {
-            return;
-        }
-
-        let new_value = match trial.value() {
-            Ok(Some(v)) => v,
-            _ => return,
-        };
-
-        let direction = study.directions[0];
-        let is_better = if let Some(best_id) = study.best_trial_id {
-            let best_trial = study.trials.iter().find(|t| t.trial_id == best_id);
-            match best_trial.and_then(|t| t.value().ok().flatten()) {
-                Some(best_value) => match direction {
-                    StudyDirection::Minimize | StudyDirection::NotSet => new_value < best_value,
-                    StudyDirection::Maximize => new_value > best_value,
-                },
-                None => true,
-            }
-        } else {
-            true
-        };
-
-        if is_better {
-            study.best_trial_id = Some(trial_id);
-        }
-    }
 }
 
 impl Storage for InMemoryStorage {
@@ -172,7 +131,6 @@ impl Storage for InMemoryStorage {
                 param_distribution: HashMap::new(),
                 user_attrs: HashMap::new(),
                 system_attrs: HashMap::new(),
-                best_trial_id: None,
             },
         );
         Ok(study_id)
@@ -285,6 +243,9 @@ impl Storage for InMemoryStorage {
             let mut t = template.clone();
             t.trial_id = trial_id;
             t.number = trial_number;
+            // Reject templates that violate trial invariants instead of
+            // silently persisting corrupted state.
+            t.validate()?;
             t
         } else {
             // Create a fresh RUNNING trial
@@ -309,7 +270,6 @@ impl Storage for InMemoryStorage {
 
         let study = Self::get_study_mut(&mut inner, study_id)?;
         study.trials.push(trial);
-        Self::update_cache(study, trial_id);
 
         Ok(trial_id)
     }
@@ -334,6 +294,13 @@ impl Storage for InMemoryStorage {
         {
             return Err(Error::ValueError(format!(
                 "cannot set different distribution for param '{param_name}'"
+            )));
+        }
+
+        // Validate the value against the distribution before writing.
+        if param_value_internal.is_nan() || !distribution.contains(param_value_internal) {
+            return Err(Error::ValueError(format!(
+                "param '{param_name}' value {param_value_internal} is not contained in its distribution"
             )));
         }
 
@@ -372,6 +339,38 @@ impl Storage for InMemoryStorage {
 
         Self::check_updatable(trial)?;
 
+        // Validate state/value invariants before mutating.
+        match state {
+            TrialState::Complete => {
+                let values = values.ok_or_else(|| {
+                    Error::ValueError(format!("trial {trial_id} is COMPLETE but has no values"))
+                })?;
+                if values.is_empty() {
+                    return Err(Error::ValueError(format!(
+                        "trial {trial_id} is COMPLETE but has no values"
+                    )));
+                }
+                if values.iter().any(|v| v.is_nan()) {
+                    return Err(Error::ValueError(format!(
+                        "trial {trial_id} is COMPLETE but contains NaN values"
+                    )));
+                }
+                if values.len() != study.directions.len() {
+                    return Err(Error::ValueError(format!(
+                        "trial {trial_id} has {} values but the study has {} objectives",
+                        values.len(),
+                        study.directions.len()
+                    )));
+                }
+            }
+            TrialState::Fail if values.is_some() => {
+                return Err(Error::ValueError(format!(
+                    "trial {trial_id} is FAIL but has values"
+                )));
+            }
+            _ => {}
+        }
+
         let study = Self::get_study_mut(&mut inner, study_id)?;
         let trial = &mut study.trials[trial_number as usize];
 
@@ -386,7 +385,6 @@ impl Storage for InMemoryStorage {
         trial.state = state;
         trial.values = values.map(|v| v.to_vec());
 
-        Self::update_cache(study, trial_id);
         Ok(true)
     }
 
@@ -856,5 +854,121 @@ mod tests {
             trial.user_attrs.get("preset"),
             Some(&serde_json::json!(true))
         );
+    }
+
+    fn running_trial(storage: &InMemoryStorage) -> (i64, i64) {
+        let sid = storage
+            .create_new_study(&[StudyDirection::Minimize], None)
+            .unwrap();
+        let tid = storage.create_new_trial(sid, None).unwrap();
+        (sid, tid)
+    }
+
+    #[test]
+    fn test_set_state_values_complete_requires_values() {
+        let storage = InMemoryStorage::new();
+        let (_, tid) = running_trial(&storage);
+        assert!(
+            storage
+                .set_trial_state_values(tid, TrialState::Complete, None)
+                .is_err()
+        );
+        assert!(
+            storage
+                .set_trial_state_values(tid, TrialState::Complete, Some(&[]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_set_state_values_complete_rejects_nan() {
+        let storage = InMemoryStorage::new();
+        let (_, tid) = running_trial(&storage);
+        assert!(
+            storage
+                .set_trial_state_values(tid, TrialState::Complete, Some(&[f64::NAN]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_set_state_values_complete_checks_objective_count() {
+        // Multi-objective study: value count must match directions.
+        let storage = InMemoryStorage::new();
+        let sid = storage
+            .create_new_study(&[StudyDirection::Minimize, StudyDirection::Maximize], None)
+            .unwrap();
+        let tid = storage.create_new_trial(sid, None).unwrap();
+        assert!(
+            storage
+                .set_trial_state_values(tid, TrialState::Complete, Some(&[1.0]))
+                .is_err()
+        );
+        assert!(
+            storage
+                .set_trial_state_values(tid, TrialState::Complete, Some(&[1.0, 2.0]))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_set_state_values_fail_rejects_values() {
+        let storage = InMemoryStorage::new();
+        let (_, tid) = running_trial(&storage);
+        assert!(
+            storage
+                .set_trial_state_values(tid, TrialState::Fail, Some(&[1.0]))
+                .is_err()
+        );
+        assert!(
+            storage
+                .set_trial_state_values(tid, TrialState::Fail, None)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_set_trial_param_rejects_out_of_range() {
+        let storage = InMemoryStorage::new();
+        let (_, tid) = running_trial(&storage);
+        let dist = Distribution::IntDistribution(
+            crate::distributions::IntDistribution::new(1, 10, false, 1).unwrap(),
+        );
+        // Internal repr 15 is outside [1, 10].
+        assert!(storage.set_trial_param(tid, "x", 15.0, &dist).is_err());
+        // NaN is always rejected.
+        assert!(storage.set_trial_param(tid, "x", f64::NAN, &dist).is_err());
+        // A valid value still works.
+        assert!(storage.set_trial_param(tid, "x", 7.0, &dist).is_ok());
+    }
+
+    #[test]
+    fn test_create_new_trial_rejects_invalid_template() {
+        let storage = InMemoryStorage::new();
+        let sid = storage
+            .create_new_study(&[StudyDirection::Minimize], None)
+            .unwrap();
+
+        // A "completed" template with no values violates the invariants.
+        let mut template = FrozenTrial {
+            number: 0,
+            state: TrialState::Complete,
+            values: None,
+            datetime_start: Some(Utc::now()),
+            datetime_complete: Some(Utc::now()),
+            params: HashMap::new(),
+            distributions: HashMap::new(),
+            user_attrs: HashMap::new(),
+            system_attrs: HashMap::new(),
+            intermediate_values: HashMap::new(),
+            trial_id: 0,
+        };
+        assert!(storage.create_new_trial(sid, Some(&template)).is_err());
+
+        // A template whose params lack matching distributions violates the
+        // invariants too.
+        template.values = Some(vec![1.0]);
+        template.params.insert("x".into(), ParamValue::Float(0.5));
+        assert!(storage.create_new_trial(sid, Some(&template)).is_err());
     }
 }

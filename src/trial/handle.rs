@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 use crate::pruners::Pruner;
 use crate::samplers::Sampler;
 use crate::storage::Storage;
-use crate::trial::TrialState;
+use crate::trial::{FrozenTrial, TrialState};
 
 /// A mutable handle to a running trial.
 ///
@@ -25,6 +25,13 @@ pub struct Trial {
     number: i64,
     /// Relative param values pre-sampled by the sampler (internal repr).
     relative_params: HashMap<String, f64>,
+    /// Pre-specified (enqueued) param values; take precedence over the sampler.
+    fixed_params: HashMap<String, crate::distributions::ParamValue>,
+    /// Trial history, fetched at most once per trial for independent
+    /// sampling. Samplers that need history need the same history for every
+    /// parameter of a trial, and fetching it per-parameter deep-clones the
+    /// whole study once per suggest.
+    history: Option<Vec<FrozenTrial>>,
 }
 
 impl Trial {
@@ -38,6 +45,7 @@ impl Trial {
         sampler: Arc<dyn Sampler>,
         pruner: Arc<dyn Pruner>,
         relative_params: HashMap<String, f64>,
+        fixed_params: HashMap<String, crate::distributions::ParamValue>,
     ) -> Self {
         Self {
             trial_id,
@@ -47,6 +55,8 @@ impl Trial {
             pruner,
             number,
             relative_params,
+            fixed_params,
+            history: None,
         }
     }
 
@@ -108,11 +118,38 @@ impl Trial {
         })
     }
 
+    /// Record the sampler's pre-sampled relative parameters.
+    pub(crate) fn set_relative_params(&mut self, params: HashMap<String, f64>) {
+        self.relative_params = params;
+    }
+
+    /// Names of enqueued parameters the objective never asked for.
+    ///
+    /// An enqueued trial is a request to evaluate one specific configuration.
+    /// If a name was never suggested — a typo, or a parameter behind a branch
+    /// the objective did not take — that configuration was not the one
+    /// evaluated, and saying so beats silently running an ordinary trial.
+    pub(crate) fn unconsumed_fixed_params(&self) -> Result<Vec<String>> {
+        if self.fixed_params.is_empty() {
+            return Ok(Vec::new());
+        }
+        let frozen = self.storage.get_trial(self.trial_id)?;
+        let mut unconsumed: Vec<String> = self
+            .fixed_params
+            .keys()
+            .filter(|name| !frozen.params.contains_key(*name))
+            .cloned()
+            .collect();
+        unconsumed.sort();
+        Ok(unconsumed)
+    }
+
     /// Core suggest logic: check if already suggested or in relative params,
     /// otherwise fall back to independent sampling.
     fn suggest(&mut self, name: &str, dist: &Distribution) -> Result<f64> {
-        // Check if this param was already set (re-suggest returns same value)
         let existing = self.storage.get_trial(self.trial_id)?;
+
+        // Check if this param was already set (re-suggest returns same value)
         if let Some(existing_dist) = existing.distributions.get(name) {
             if existing_dist != dist {
                 return Err(Error::ValueError(format!(
@@ -123,12 +160,29 @@ impl Trial {
             return dist.to_internal_repr(val);
         }
 
-        // Check if we have a pre-sampled relative param
-        let internal = if let Some(&v) = self.relative_params.get(name) {
+        // Enqueued (fixed) values take precedence, then relative params, then
+        // independent sampling.
+        let internal = if let Some(pv) = self.fixed_params.get(name) {
+            dist.to_internal_repr(pv).map_err(|e| {
+                Error::ValueError(format!(
+                    "enqueued value for parameter '{name}' cannot be used: {e}"
+                ))
+            })?
+        } else if let Some(&v) = self.relative_params.get(name) {
             v
         } else {
-            // Fall back to independent sampling
-            self.sampler.sample_independent(&existing, name, dist)?
+            // Fall back to independent sampling. Only this branch needs the
+            // trial history, so it is fetched lazily and then reused for the
+            // rest of the trial: fetching per-parameter would deep-clone the
+            // whole study N*P times over a study of N trials with P
+            // parameters. Within one trial the only history that changes is
+            // this trial's own, which independent samplers do not model.
+            if self.history.is_none() {
+                self.history = Some(self.storage.get_all_trials(self.study_id, None)?);
+            }
+            let all_trials = self.history.as_deref().unwrap_or(&[]);
+            self.sampler
+                .sample_independent(all_trials, &existing, name, dist)?
         };
 
         // Record the param in storage

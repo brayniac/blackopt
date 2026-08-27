@@ -70,17 +70,17 @@ impl GaussianProcess {
         let mut means = Vec::with_capacity(n_test);
         let mut variances = Vec::with_capacity(n_test);
 
-        for i in 0..n_test {
-            // mean = k_star[i] . alpha
-            let mu: f64 = k_star[i]
+        for k_row in &k_star {
+            // mean = k_row . alpha
+            let mu: f64 = k_row
                 .iter()
                 .zip(self.alpha.iter())
                 .map(|(k, a)| k * a)
                 .sum();
             means.push(mu);
 
-            // v = L^{-1} k_star[i]
-            let v = forward_solve(&self.chol_l, &k_star[i]);
+            // v = L^{-1} k_row
+            let v = forward_solve(&self.chol_l, k_row);
             let k_ss = self.output_scale; // k(x*, x*) for Matern 5/2 with r=0
             let var = (k_ss - v.iter().map(|vi| vi * vi).sum::<f64>()).max(1e-10);
             variances.push(var);
@@ -154,18 +154,17 @@ fn kernel_matrix(
 
 /// Cholesky decomposition of (K + noise_var * I) with jitter escalation.
 fn cholesky_with_jitter(k: &[Vec<f64>], noise_var: f64) -> Option<Vec<Vec<f64>>> {
-    let n = k.len();
     let mut a: Vec<Vec<f64>> = k.to_vec();
-    for i in 0..n {
-        a[i][i] += noise_var;
+    for (i, row) in a.iter_mut().enumerate() {
+        row[i] += noise_var;
     }
 
     // Try increasing jitter levels on failure.
     for &jitter in &[0.0, 1e-8, 1e-6, 1e-4, 1e-3, 1e-2] {
         let mut m = a.clone();
         if jitter > 0.0 {
-            for i in 0..n {
-                m[i][i] += jitter;
+            for (i, row) in m.iter_mut().enumerate() {
+                row[i] += jitter;
             }
         }
         if let Some(l) = cholesky(&m) {
@@ -181,8 +180,8 @@ fn cholesky(a: &[Vec<f64>]) -> Option<Vec<Vec<f64>>> {
     let mut l = vec![vec![0.0; n]; n];
     for j in 0..n {
         let mut sum = 0.0;
-        for k in 0..j {
-            sum += l[j][k] * l[j][k];
+        for &val in &l[j][..j] {
+            sum += val * val;
         }
         let diag = a[j][j] - sum;
         if diag <= 0.0 {
@@ -191,8 +190,8 @@ fn cholesky(a: &[Vec<f64>]) -> Option<Vec<Vec<f64>>> {
         l[j][j] = diag.sqrt();
         for i in (j + 1)..n {
             let mut sum = 0.0;
-            for k in 0..j {
-                sum += l[i][k] * l[j][k];
+            for (li, lj) in l[i][..j].iter().zip(l[j][..j].iter()) {
+                sum += li * lj;
             }
             l[i][j] = (a[i][j] - sum) / l[j][j];
         }

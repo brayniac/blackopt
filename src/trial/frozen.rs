@@ -190,6 +190,9 @@ mod tests {
     use super::*;
     use crate::distributions::{FloatDistribution, IntDistribution};
 
+    // A 5-tuple of empty maps is the terse way to build a blank FrozenTrial in
+    // tests; the type is deliberately allowed to stay complex.
+    #[allow(clippy::type_complexity)]
     fn empty_maps() -> (
         HashMap<String, ParamValue>,
         HashMap<String, Distribution>,

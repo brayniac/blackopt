@@ -60,8 +60,8 @@ impl CovState {
                 new_mean[i] += p[i];
             }
         }
-        for i in 0..n {
-            new_mean[i] /= k as f64;
+        for m in &mut new_mean {
+            *m /= k as f64;
         }
 
         // Compute sample covariance.
@@ -93,11 +93,11 @@ impl CovState {
             self.mean = new_mean;
             self.cov = new_cov;
         } else {
-            for i in 0..n {
-                self.mean[i] = alpha * self.mean[i] + (1.0 - alpha) * new_mean[i];
+            for (m, nm) in self.mean.iter_mut().zip(&new_mean) {
+                *m = alpha * *m + (1.0 - alpha) * nm;
             }
-            for i in 0..n * n {
-                self.cov[i] = alpha * self.cov[i] + (1.0 - alpha) * new_cov[i];
+            for (c, nc) in self.cov.iter_mut().zip(&new_cov) {
+                *c = alpha * *c + (1.0 - alpha) * nc;
             }
         }
         self.n_updates += 1;
