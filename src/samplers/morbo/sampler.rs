@@ -325,14 +325,16 @@ impl Sampler for MorboSampler {
             morbo_state.current_hv = new_hv;
         }
 
-        // Update the generating TR.
-        if let Some(tr_idx) = morbo_state.pending_tr_idx.take() {
-            if let Some(tr) = morbo_state.trust_regions.get_mut(tr_idx) {
-                if hv_improved {
-                    tr.record_success();
-                } else {
-                    tr.record_failure();
-                }
+        // Update the generating TR. `get_mut` rather than indexing: after a
+        // restart replaces the trust regions, a stale index must be a no-op
+        // rather than a panic.
+        if let Some(tr_idx) = morbo_state.pending_tr_idx.take()
+            && let Some(tr) = morbo_state.trust_regions.get_mut(tr_idx)
+        {
+            if hv_improved {
+                tr.record_success();
+            } else {
+                tr.record_failure();
             }
         }
     }
