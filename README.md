@@ -132,6 +132,12 @@ println!("Pareto front size: {}", pareto_front.len());
 - Deb, K. & Jain, H. (2014). "An Evolutionary Many-Objective Optimization Algorithm Using Reference-Point-Based Nondominated Sorting Approach." *IEEE Transactions on Evolutionary Computation*.
 - Daulton, S., Eriksson, D., Balandat, M., & Bakshy, E. (2022). "Multi-Objective Bayesian Optimization over High-Dimensional Search Spaces." *UAI*.
 
+## Changelog
+
+Notable changes are recorded in [CHANGELOG.md](CHANGELOG.md). The crate is
+pre-`0.1.0`, so breaking changes can land in any release; they are always listed
+under a **Breaking** heading.
+
 ## Acknowledgments
 
 blackopt's API and several of its algorithm implementations are modeled on and
