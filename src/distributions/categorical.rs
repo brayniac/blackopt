@@ -59,6 +59,18 @@ impl CategoricalDistribution {
                 "choices must not be empty".into(),
             ));
         }
+        // A non-finite float choice is not equal to itself, so it could never
+        // be matched back to its own index: the parameter would silently fall
+        // back to random sampling forever, and `CategoricalChoice`'s `Eq`
+        // impl would not hold for it either.
+        if let Some(bad) = choices.iter().find_map(|c| match c {
+            CategoricalChoice::Float(v) if !v.is_finite() => Some(*v),
+            _ => None,
+        }) {
+            return Err(Error::InvalidDistribution(format!(
+                "categorical choices must be finite, got {bad}"
+            )));
+        }
         Ok(Self { choices })
     }
 
@@ -150,5 +162,21 @@ mod tests {
                 .unwrap()
                 .single()
         );
+    }
+
+    #[test]
+    fn test_non_finite_float_choice_rejected() {
+        // Regression: a NaN choice is not equal to itself, so it could never
+        // be matched back to its own index — the parameter silently fell back
+        // to random sampling forever.
+        assert!(CategoricalDistribution::new(vec![CategoricalChoice::Float(f64::NAN)]).is_err());
+        assert!(
+            CategoricalDistribution::new(vec![
+                CategoricalChoice::Int(1),
+                CategoricalChoice::Float(f64::INFINITY),
+            ])
+            .is_err()
+        );
+        assert!(CategoricalDistribution::new(vec![CategoricalChoice::Float(1.5)]).is_ok());
     }
 }

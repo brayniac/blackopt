@@ -111,7 +111,12 @@ impl TpeSampler {
 
         for &t in trials {
             match t.state {
-                TrialState::Complete => complete.push(t),
+                // A trial whose `value()` is unreadable — a multi-objective
+                // trial, say — would sort as ±infinity and turn the good/bad
+                // split into "the oldest trials are good". Drop it instead:
+                // TPE is a single-objective sampler and should fall back
+                // rather than model noise.
+                TrialState::Complete if matches!(t.value(), Ok(Some(_))) => complete.push(t),
                 TrialState::Pruned => pruned.push(t),
                 TrialState::Running => running.push(t),
                 _ => {}
@@ -262,11 +267,22 @@ impl TpeSampler {
 
     /// Check if we're still in the startup phase.
     fn is_startup(&self, trials: &[FrozenTrial]) -> bool {
-        let n_complete = trials
-            .iter()
-            .filter(|t| t.state == TrialState::Complete || t.state == TrialState::Pruned)
-            .count();
-        n_complete < self.n_startup_trials
+        Self::n_modelable(trials.iter()) < self.n_startup_trials
+    }
+
+    /// How many trials `split_trials` will actually model.
+    ///
+    /// Complete trials only count if their objective value is readable; in a
+    /// multi-objective study none of them are, so TPE stays on its random
+    /// fallback instead of building a model out of trials it cannot rank.
+    fn n_modelable<'a>(trials: impl Iterator<Item = &'a FrozenTrial>) -> usize {
+        trials
+            .filter(|t| match t.state {
+                TrialState::Complete => matches!(t.value(), Ok(Some(_))),
+                TrialState::Pruned => true,
+                _ => false,
+            })
+            .count()
     }
 }
 
@@ -288,6 +304,11 @@ impl Sampler for TpeSampler {
         search_space: &HashMap<String, Distribution>,
     ) -> Result<HashMap<String, f64>> {
         if search_space.is_empty() {
+            return Ok(HashMap::new());
+        }
+        // Nothing to model: let the study fall through to independent
+        // sampling rather than returning points drawn from an empty model.
+        if Self::n_modelable(trials.iter()) < 2 {
             return Ok(HashMap::new());
         }
 
@@ -331,15 +352,11 @@ impl Sampler for TpeSampler {
             .iter()
             .filter(|t| t.distributions.get(param_name) == Some(distribution))
             .collect();
-        // `split_trials` only models Complete and Pruned trials, so count
-        // those rather than the raw length: two failed trials would
-        // otherwise put us on the TPE path with no observations at all,
-        // silently returning a centre-biased draw instead of a random one.
-        let n_usable = relevant
-            .iter()
-            .filter(|t| matches!(t.state, TrialState::Complete | TrialState::Pruned))
-            .count();
-        if n_usable < 2 {
+        // Count what `split_trials` will actually model rather than the raw
+        // length: two failed (or two multi-objective) trials would otherwise
+        // put us on the TPE path with no observations at all, silently
+        // returning a centre-biased draw instead of a random one.
+        if Self::n_modelable(relevant.iter().copied()) < 2 {
             return self
                 .random_sampler
                 .sample_independent(trials, trial, param_name, distribution);
@@ -794,5 +811,47 @@ mod tests {
                 .count();
             assert_eq!(failed, 0, "log-int [{low}, {high}] failed {failed} trials");
         }
+    }
+
+    #[test]
+    fn test_split_trials_ignores_unrankable_trials() {
+        // Regression: a multi-objective trial's `value()` is an error, so it
+        // sorted as ±infinity and the good/bad split degenerated into "the
+        // oldest trials are good". TPE is single-objective; it must fall back
+        // rather than model trials it cannot rank.
+        let sampler = TpeSampler::with_defaults(StudyDirection::Minimize, Some(42));
+
+        let multi: Vec<FrozenTrial> = (0..10)
+            .map(|i| FrozenTrial {
+                number: i,
+                state: TrialState::Complete,
+                values: Some(vec![i as f64, (10 - i) as f64]),
+                datetime_start: None,
+                datetime_complete: None,
+                params: HashMap::new(),
+                distributions: HashMap::new(),
+                user_attrs: HashMap::new(),
+                system_attrs: HashMap::new(),
+                intermediate_values: HashMap::new(),
+                trial_id: i,
+            })
+            .collect();
+
+        let refs: Vec<&FrozenTrial> = multi.iter().collect();
+        let (below, above) = sampler.split_trials(&refs);
+        assert!(
+            below.is_empty() && above.is_empty(),
+            "unrankable trials must not be modeled: below={}, above={}",
+            below.len(),
+            above.len()
+        );
+
+        // And the study-level effect: sample_relative has nothing to model.
+        let mut ss = HashMap::new();
+        ss.insert(
+            "x".to_string(),
+            Distribution::FloatDistribution(FloatDistribution::new(0.0, 1.0, false, None).unwrap()),
+        );
+        assert!(sampler.sample_relative(&multi, &ss).unwrap().is_empty());
     }
 }

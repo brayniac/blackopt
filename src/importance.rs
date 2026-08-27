@@ -49,8 +49,13 @@ impl Default for FanovaEvaluator {
 
 impl FanovaEvaluator {
     /// Create a new evaluator with the given number of bins.
+    ///
+    /// `n_bins` is clamped to at least 1: zero bins has no meaning here, and
+    /// leaving it unclamped made the binning arithmetic underflow.
     pub fn new(n_bins: usize) -> Self {
-        Self { n_bins }
+        Self {
+            n_bins: n_bins.max(1),
+        }
     }
 }
 
@@ -63,6 +68,15 @@ impl ImportanceEvaluator for FanovaEvaluator {
     ) -> Result<IndexMap<String, f64>> {
         if trials.is_empty() || params.is_empty() {
             return Ok(IndexMap::new());
+        }
+        // `target_values` is indexed by trial position below, so a caller
+        // passing a mismatched length must be told, not indexed out of bounds.
+        if target_values.len() != trials.len() {
+            return Err(Error::ValueError(format!(
+                "target_values has {} entries but there are {} trials",
+                target_values.len(),
+                trials.len()
+            )));
         }
 
         let global_mean: f64 = target_values.iter().sum::<f64>() / target_values.len() as f64;
@@ -86,8 +100,9 @@ impl ImportanceEvaluator for FanovaEvaluator {
             // Collect (param_value, objective_value) pairs
             let mut pairs: Vec<(f64, f64)> = Vec::new();
             for (i, trial) in trials.iter().enumerate() {
-                if let Some(pv) = trial.params.get(param_name) {
-                    let internal = param_value_to_f64(pv, &cat_choices);
+                if let Some(pv) = trial.params.get(param_name)
+                    && let Some(internal) = param_value_to_f64(pv, &cat_choices)
+                {
                     pairs.push((internal, target_values[i]));
                 }
             }
@@ -128,15 +143,22 @@ impl ImportanceEvaluator for FanovaEvaluator {
 /// Convert a ParamValue to f64 for importance computation.
 ///
 /// For categorical values, the stable index of the choice within
-/// `cat_choices` is used. If the choice is not found (should not happen when
-/// `cat_choices` comes from the trial's own distribution), 0.0 is returned.
-fn param_value_to_f64(pv: &ParamValue, cat_choices: &Option<Vec<CategoricalChoice>>) -> f64 {
+/// `cat_choices` is used.
+///
+/// Returns `None` when a categorical value cannot be placed: an unknown
+/// choice, or a parameter whose reference distribution is not categorical.
+/// Folding those onto index 0 silently merged them with the first choice,
+/// which understates the parameter's importance.
+fn param_value_to_f64(
+    pv: &ParamValue,
+    cat_choices: &Option<Vec<CategoricalChoice>>,
+) -> Option<f64> {
     match pv {
-        ParamValue::Float(v) => *v,
-        ParamValue::Int(v) => *v as f64,
+        ParamValue::Float(v) => Some(*v),
+        ParamValue::Int(v) => Some(*v as f64),
         ParamValue::Categorical(c) => match cat_choices {
-            Some(choices) => choices.iter().position(|x| x == c).unwrap_or(0) as f64,
-            None => 0.0,
+            Some(choices) => choices.iter().position(|x| x == c).map(|i| i as f64),
+            None => None,
         },
     }
 }
@@ -146,7 +168,7 @@ fn param_value_to_f64(pv: &ParamValue, cat_choices: &Option<Vec<CategoricalChoic
 /// Groups values into `n_bins` equally-spaced bins based on param_value,
 /// then computes weighted variance of group means around the global mean.
 fn between_group_variance(pairs: &[(f64, f64)], n_bins: usize, global_mean: f64) -> f64 {
-    if pairs.len() <= 1 {
+    if pairs.len() <= 1 || n_bins == 0 {
         return 0.0;
     }
 
@@ -248,7 +270,31 @@ mod tests {
     use super::*;
     use crate::samplers::RandomSampler;
     use crate::study::{StudyDirection, create_study};
+    use std::collections::HashMap;
     use std::sync::Arc;
+
+    fn trial_with_param(number: i64, x: f64, objective: f64) -> FrozenTrial {
+        let dist = Distribution::FloatDistribution(
+            crate::distributions::FloatDistribution::new(0.0, 1.0, false, None).unwrap(),
+        );
+        let mut params = HashMap::new();
+        params.insert("x".to_string(), ParamValue::Float(x));
+        let mut distributions = HashMap::new();
+        distributions.insert("x".to_string(), dist);
+        FrozenTrial {
+            number,
+            state: TrialState::Complete,
+            values: Some(vec![objective]),
+            datetime_start: Some(chrono::Utc::now()),
+            datetime_complete: Some(chrono::Utc::now()),
+            params,
+            distributions,
+            user_attrs: HashMap::new(),
+            system_attrs: HashMap::new(),
+            intermediate_values: HashMap::new(),
+            trial_id: number,
+        }
+    }
 
     #[test]
     fn test_fanova_evaluator_basic() {
@@ -378,20 +424,20 @@ mod tests {
             &cat,
         );
         assert_eq!(a1, a2);
-        assert_eq!(a1, 0.0);
+        assert_eq!(a1, Some(0.0));
 
         let b = param_value_to_f64(
             &ParamValue::Categorical(CategoricalChoice::Str("b".into())),
             &cat,
         );
-        assert_eq!(b, 1.0);
+        assert_eq!(b, Some(1.0));
 
         // Distinct choices get distinct, contiguous codes.
         let c = param_value_to_f64(
             &ParamValue::Categorical(CategoricalChoice::Str("c".into())),
             &cat,
         );
-        assert_eq!(c, 2.0);
+        assert_eq!(c, Some(2.0));
         assert!(a1 < b && b < c);
     }
 
@@ -516,5 +562,65 @@ mod tests {
         // First key should be x (most important)
         let first_key = importances.keys().next().unwrap();
         assert_eq!(first_key, "x", "x should be most important");
+    }
+
+    #[test]
+    fn test_fanova_zero_bins_does_not_panic() {
+        // Regression: `bin.min(n_bins - 1)` underflowed for n_bins == 0,
+        // panicking on a value a caller can legitimately pass.
+        let ev = FanovaEvaluator::new(0);
+        let trials: Vec<FrozenTrial> = (0..5)
+            .map(|i| trial_with_param(i, i as f64 / 5.0, i as f64))
+            .collect();
+        let targets: Vec<f64> = trials
+            .iter()
+            .map(|t| t.values.as_ref().unwrap()[0])
+            .collect();
+        assert!(ev.evaluate(&trials, &["x".to_string()], &targets).is_ok());
+    }
+
+    #[test]
+    fn test_evaluate_rejects_mismatched_target_values() {
+        // Regression: `target_values` is indexed by trial position, so a
+        // short slice indexed out of bounds instead of reporting the misuse.
+        let ev = FanovaEvaluator::new(10);
+        let trials: Vec<FrozenTrial> = (0..5)
+            .map(|i| trial_with_param(i, i as f64 / 5.0, i as f64))
+            .collect();
+        assert!(ev.evaluate(&trials, &["x".to_string()], &[1.0]).is_err());
+    }
+
+    #[test]
+    fn test_unknown_categorical_choice_is_skipped_not_aliased() {
+        // Regression: an unrecognised choice fell back to index 0, silently
+        // merging it with the first choice and understating importance.
+        let cat = Some(vec![
+            CategoricalChoice::Str("a".into()),
+            CategoricalChoice::Str("b".into()),
+        ]);
+        assert_eq!(
+            param_value_to_f64(
+                &ParamValue::Categorical(CategoricalChoice::Str("a".into())),
+                &cat
+            ),
+            Some(0.0)
+        );
+        assert_eq!(
+            param_value_to_f64(
+                &ParamValue::Categorical(CategoricalChoice::Str("zzz".into())),
+                &cat
+            ),
+            None,
+            "an unknown choice must not be aliased onto the first one"
+        );
+        // A categorical value with no categorical reference distribution is
+        // likewise unplaceable rather than 0.0.
+        assert_eq!(
+            param_value_to_f64(
+                &ParamValue::Categorical(CategoricalChoice::Str("a".into())),
+                &None
+            ),
+            None
+        );
     }
 }

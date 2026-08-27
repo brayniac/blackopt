@@ -76,7 +76,12 @@ impl FloatDistribution {
         }
         if let Some(step) = self.step {
             let k = (value - self.low) / step;
-            (k - k.round()).abs() < 1.0e-8
+            // The tolerance has to scale with the values involved: when
+            // `low / step` is large the grid points are not exactly
+            // representable, and a fixed absolute tolerance rejects almost
+            // every legitimate value.
+            let tol = 1.0e-8_f64.max(4.0 * f64::EPSILON * value.abs() / step);
+            (k - k.round()).abs() < tol
         } else {
             true
         }
@@ -207,5 +212,20 @@ mod tests {
         let d = FloatDistribution::new(0.0, 0.3, false, Some(0.1)).unwrap();
         assert!((d.high - 0.3).abs() < 1e-12, "high={}", d.high);
         assert!(d.contains(d.high));
+    }
+
+    #[test]
+    fn test_step_grid_tolerance_scales_with_magnitude() {
+        // Regression: a fixed 1e-8 tolerance on (value - low) / step rejected
+        // almost every on-grid value once low/step grew large, because the
+        // grid points are not exactly representable there.
+        let d = FloatDistribution::new(1e6, 1e6 + 1.0, false, Some(1e-6)).unwrap();
+        let rejected = (0..1000)
+            .filter(|k| !d.contains(d.low + (*k as f64) * 1e-6))
+            .count();
+        assert_eq!(rejected, 0, "{rejected}/1000 on-grid values were rejected");
+
+        // Values genuinely off the grid are still rejected.
+        assert!(!d.contains(d.low + 0.5e-6));
     }
 }
