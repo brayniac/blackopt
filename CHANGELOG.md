@@ -138,6 +138,10 @@ Everything since the initial commit. No version has been tagged yet.
 - GitHub Actions CI: rustfmt, clippy (warnings denied), tests on Linux and
   macOS, a build against the declared MSRV, rustdoc with warnings denied, and
   `cargo package`.
+- `Cargo.lock` is now committed. Consumers of a library ignore it, but CI needs
+  it: without a lock file every run resolves dependencies afresh, so a
+  dependency that raises its own minimum Rust version would fail the MSRV job
+  for reasons unrelated to this crate.
 
 ### Documentation
 
