@@ -1,5 +1,7 @@
 # blackopt
 
+[![CI](https://github.com/brayniac/blackopt/actions/workflows/ci.yml/badge.svg)](https://github.com/brayniac/blackopt/actions/workflows/ci.yml)
+
 Black-box optimization in Rust. Provides automatic hyperparameter search with single and multi-objective optimization, pruning, and a variety of sampling algorithms.
 
 ## Features

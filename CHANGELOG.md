@@ -46,7 +46,12 @@ Everything since the initial commit. No version has been tagged yet.
   Result<bool>`.
 - Removed `Storage::remove_session` (an unused no-op with no implementors) and
   `GridSampler::suggest_grid_id` (superseded by the `trial_created` hook).
-- Minimum supported Rust version raised from 1.85 to 1.86, for `f64::next_down`.
+- Minimum supported Rust version corrected to **1.88**. It was declared as
+  1.85, then 1.86; both were wrong. The crate has used `let` chains
+  (`if let ... && let ...`) since its first commit, and those stabilized in
+  1.88 — so it never built on the version it advertised. CI now checks the
+  declared MSRV on every run, reading it from `Cargo.toml` so the two cannot
+  drift apart again.
 
 #### Behavior
 
@@ -127,6 +132,12 @@ Everything since the initial commit. No version has been tagged yet.
 - `add_trial` rejected hand-built templates that omit timestamps, and accepted
   templates whose objective count disagreed with the study's.
 - `FloatDistribution::new` accepted NaN bounds and step.
+
+### Infrastructure
+
+- GitHub Actions CI: rustfmt, clippy (warnings denied), tests on Linux and
+  macOS, a build against the declared MSRV, rustdoc with warnings denied, and
+  `cargo package`.
 
 ### Documentation
 
