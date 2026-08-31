@@ -26,7 +26,7 @@ jobs:
     env:
       RUSTFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@beta
         with:
           components: clippy
@@ -43,7 +43,7 @@ jobs:
     # permanent red light that everyone learns to ignore. A failure here means
     # something actually broke, not that a lint was renamed.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-targets --locked
@@ -55,7 +55,7 @@ jobs:
     env:
       RUSTFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Committing Cargo.lock made CI reproducible at the cost of never seeing
